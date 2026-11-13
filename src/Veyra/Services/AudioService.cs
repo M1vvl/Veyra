@@ -7,7 +7,24 @@ public sealed record AudioState(double Volume, bool Muted, bool Available, strin
 /// <summary>Direct controls for the current default multimedia output endpoint.</summary>
 public sealed class AudioService : IDisposable
 {
-    private bool _disposed;
+    private volatile bool _disposed;
+    private static readonly SingleFlightOperation<AudioState> BackgroundRead=new();
+    internal static Task<AudioState> ReadBackgroundAsync()=>BackgroundRead.StartOrJoin(()=>
+    {
+        using var service=new AudioService();
+        return service.Read();
+    });
+
+    private static readonly SemaphoreSlim BackgroundWrites=new(1,1);
+    internal static async Task<AudioState> SetVolumeBackgroundAsync(double volume)
+    {
+        await BackgroundWrites.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(()=> {using var service=new AudioService(); return service.SetVolume(volume);}).ConfigureAwait(false);
+        }
+        finally {BackgroundWrites.Release();}
+    }
 
     public AudioState Read() => WithEndpoint(ReadEndpoint);
 

@@ -87,7 +87,7 @@ internal static class TrayHostProbe
                     var data=Data(fixture.Handle,i);
                     Check("Shell_NotifyIcon delete "+i,Shell_NotifyIcon(2,ref data));
                 }
-                await Task.Delay(80);
+                await Task.Delay(1000); // Wait beyond the 800 ms delete/re-add flashing grace.
                 Check("Owned icons removed",!host.Snapshot.Any(icon=>icon.WindowHandle==fixture.Handle && Ids.Contains(icon.IconId)));
             }
             catch(Exception ex) { failure=ex.ToString(); }

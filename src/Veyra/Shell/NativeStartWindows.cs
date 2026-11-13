@@ -40,7 +40,8 @@ internal static class NativeStartWindows
 
         EnumWindows(collect, 0);
         nint previous=0;
-        while((previous=FindWindowEx(0,previous,null,null))!=0) collect(previous,0);
+        var visited=new HashSet<nint>();
+        for(int count=0;count<4096 && (previous=FindWindowEx(0,previous,null,null))!=0 && visited.Add(previous);count++) collect(previous,0);
         GC.KeepAlive(collect);
         return windows;
     }

@@ -21,6 +21,7 @@ public static class Program
     internal static DesktopOrganization.DesktopBoxManager? DesktopBoxes;
     internal static DesktopResourceCoordinator? DesktopResources;
     private static ContextMenuDismissal? _menuDismissal;
+    private static Services.UiResponsivenessMonitor? _responsiveness;
     internal static bool Preview;
     internal static bool CapturePreview;
     internal static bool CaptureDockPreview;
@@ -43,6 +44,7 @@ public static class Program
         if(args.Length==2 && args[0]=="--control-diagnostics") return Services.ControlDiagnostics.Run(args[1]);
         if(args.Length==2 && args[0]=="--background-diagnostics") return Rendering.BackgroundDiagnostics.Run(args[1]);
         if(args.Length==2 && args[0]=="--tray-host-probe") return TrayHostProbe.Run(args[1]);
+        if(args.Length==2 && args[0]=="--responsiveness-probe") return Services.ResponsivenessProbe.Run(args[1]);
         if(args.Length==2 && args[0]=="--sidebar-tray-probe") return SidebarTrayProbe.Run(args[1]);
         if(args.Length==2 && args[0]=="--settings-preview") return SettingsPreview.Run(args[1]);
         if(args.Length==2 && args[0]=="--glass-boundary-probe") return Rendering.GlassRenderer.RunShadowBoundaryProbe(args[1]);
@@ -98,12 +100,14 @@ public static class Program
             if(args.Contains("--capture-interactions")) ScheduleInteractionCapture();
             if(captureTray) ScheduleTrayCapture();
             if(args.Contains("--record-health")) ScheduleHealthRecord();
+            if(!Preview)_responsiveness=new Services.UiResponsivenessMonitor(app.Dispatcher);
             return app.Run();
         }
         catch(Exception e) { Log(e.ToString()); StopModules(); MessageBox.Show(e.Message, Branding.Name); return 1; }
     }
     internal static void ApplyPreferences()
     {
+        using var activity=GlassDock.Services.UiResponsivenessMonitor.TrackActivity("apply preferences");
         PreferencesPersistence.Schedule(Prefs.Validated());
         if (!Preview && Prefs.ReplaceTaskbar) {if(!Lease.IsEnabled)Lease.Enable();} else if(Lease.IsEnabled)Lease.Disable();
         Dock?.ApplyPreferences(); Sidebar?.ApplyPreferences(); DesktopBoxes?.ApplyPreferences();
@@ -121,7 +125,7 @@ public static class Program
         try {PreferencesPersistence.Flush();} catch(Exception exception) {Log("Preferences save: "+exception.Message);}
         DesktopResources=null;
         try { StartMenuPlacement.Cancel(); } catch(Exception exception) { Log("Start placement shutdown: "+exception); }
-        foreach(var resource in new IDisposable?[]{TrayMenus,_menuDismissal,DesktopBoxes,TrayIcon,TrayHost,Lease,_singleInstance})
+        foreach(var resource in new IDisposable?[]{_responsiveness,TrayMenus,_menuDismissal,DesktopBoxes,TrayIcon,TrayHost,Lease,_singleInstance})
             try { resource?.Dispose(); } catch(Exception exception) { Log("Module shutdown: "+exception); }
     }
     private static void ScheduleHealthRecord()

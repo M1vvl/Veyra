@@ -291,12 +291,15 @@ public sealed class TrayHostService : IDisposable
         return DefWindowProc(window,message,wParam,lParam);
     }
 
+    private readonly ExplorerForwardingGate _forwardingGate=new();
+
     private nint Forward(uint message,nuint wParam,nint lParam,out bool completed)
     {
         completed=false;
         var explorer=FindExplorer();
         if(explorer==0 || explorer==_window || explorer==_notifyWindow) return 0;
-        completed=SendMessageTimeout(explorer,message,wParam,lParam,0x0022,250,out var result)!=0;
+        if(!_forwardingGate.CanSend(Environment.TickCount64)) return 0;
+        completed=_forwardingGate.TryForward(explorer,message,wParam,lParam,out var result);
         if(!completed) _forwardTimeouts++;
         // Explorer can raise its Shell_TrayWnd while processing an icon/appbar packet.
         // Reclaim discovery before returning to shell32, otherwise a burst of subsequent

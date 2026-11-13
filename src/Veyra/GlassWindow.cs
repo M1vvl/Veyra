@@ -133,6 +133,7 @@ internal abstract class GlassWindow : Window
     protected virtual void OnMaterialLuminance(double luminance) { }
     protected void RenderGlass()
     {
+        using var activity=GlassDock.Services.UiResponsivenessMonitor.TrackActivity("glass frame rendering");
         if(!CanRenderMaterial) { ReleaseMaterial(!Program.Prefs.GlassEnabled); return; }
         try
         {

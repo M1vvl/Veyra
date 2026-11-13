@@ -1,0 +1,234 @@
+{
+  "version": "1.0.1",
+  "scope": "targeted responsiveness and tray regressions",
+  "totalChecks": 53,
+  "suites": [
+    {
+      "suite": "responsiveness-packaged.json",
+      "checks": [
+        {
+          "name": "Owned slow-message fixture ready",
+          "pass": true
+        },
+        {
+          "name": "Blocked native discovery keeps dispatcher responsive",
+          "pass": true
+        },
+        {
+          "name": "Repeated refresh requests keep exactly one worker",
+          "pass": true
+        },
+        {
+          "name": "Blocked discovery publishes its eventual result",
+          "pass": true
+        },
+        {
+          "name": "Worker can refresh again after completion",
+          "pass": true
+        },
+        {
+          "name": "Production Dock remains interactive during blocked Shell scan",
+          "pass": true
+        },
+        {
+          "name": "Dock safely discards completion after window closes",
+          "pass": true
+        },
+        {
+          "name": "Foreign unresponsive WndProc has bounded wait",
+          "pass": true
+        },
+        {
+          "name": "Notification burst does not repeat foreign waits",
+          "pass": true
+        },
+        {
+          "name": "Explorer forwarding recovers after cooldown",
+          "pass": true
+        },
+        {
+          "name": "Production discovery excludes owned windows",
+          "pass": true
+        },
+        {
+          "name": "Lightweight monitor records stall and recovery",
+          "pass": true
+        },
+        {
+          "name": "Audio background read completes without changing volume",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "suite": "responsiveness-tray-host-packaged.json",
+      "checks": [
+        {
+          "name": "Native NOTIFYICONDATA x64 layout",
+          "pass": true
+        },
+        {
+          "name": "Production receiver preferred by Shell",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon add 0",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon set version 0",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon add 1",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon set version 3",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon add 2",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon set version 4",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon modify",
+          "pass": true
+        },
+        {
+          "name": "Actual Shell registrations decoded",
+          "pass": true
+        },
+        {
+          "name": "Native icon pixels copied",
+          "pass": true
+        },
+        {
+          "name": "Public modify reached receiver",
+          "pass": true
+        },
+        {
+          "name": "Version preservation",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIconGetRect returns custom placement",
+          "pass": true
+        },
+        {
+          "name": "Owned callback messages posted v0",
+          "pass": true
+        },
+        {
+          "name": "Callback order and packing v0",
+          "pass": true
+        },
+        {
+          "name": "Owned callback messages posted v3",
+          "pass": true
+        },
+        {
+          "name": "Callback order and packing v3",
+          "pass": true
+        },
+        {
+          "name": "Owned callback messages posted v4",
+          "pass": true
+        },
+        {
+          "name": "Callback order and packing v4",
+          "pass": true
+        },
+        {
+          "name": "Detached icon callbacks are harmless while the tray panel is still alive",
+          "pass": true
+        },
+        {
+          "name": "Tray panel click, close and detached MouseLeave do not read a dead PresentationSource",
+          "pass": true
+        },
+        {
+          "name": "Menu input observers attach only while an owned menu is open",
+          "pass": true
+        },
+        {
+          "name": "Closed menus release all native input observers",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon delete 0",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon delete 1",
+          "pass": true
+        },
+        {
+          "name": "Shell_NotifyIcon delete 2",
+          "pass": true
+        },
+        {
+          "name": "Owned icons removed",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "suite": "responsiveness-tray.json",
+      "checks": [
+        {
+          "name": "Actual sidebar opens its own tray panel with three registered fixture slots",
+          "pass": true
+        },
+        {
+          "name": "Eight flash cycles preserve exact slot positions and button instances",
+          "pass": true
+        },
+        {
+          "name": "Blank flash frame retains registered metadata and callback version",
+          "pass": true
+        },
+        {
+          "name": "A blank flashing slot still sends the real primary callback",
+          "pass": true
+        },
+        {
+          "name": "Transient native hidden-state flashes preserve their original blank slot",
+          "pass": true
+        },
+        {
+          "name": "Delete/add flashing keeps a reserved slot for a live registered owner",
+          "pass": true
+        },
+        {
+          "name": "Re-add restores the same view and sequence rather than appending a new icon",
+          "pass": true
+        },
+        {
+          "name": "Never-registered missing images do not create phantom slots",
+          "pass": true
+        },
+        {
+          "name": "A real delete removes only its slot and preserves neighboring views",
+          "pass": true
+        },
+        {
+          "name": "Sidebar and control-center windows stay visible through tray updates",
+          "pass": true
+        },
+        {
+          "name": "Tray fills all nine available columns without extra cell margins",
+          "pass": true
+        },
+        {
+          "name": "Tray icons retain native size and independent hit targets",
+          "pass": true
+        }
+      ]
+    }
+  ]
+}

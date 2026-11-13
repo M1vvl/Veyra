@@ -328,7 +328,7 @@ internal sealed class SidebarWindow : GlassWindow
     private async Task RefreshVolume()
     {
         if(_readingVolume)return; _readingVolume=true; _lastVolumeRead=Environment.TickCount64;
-        try { var state=await Task.Run(_audioState.Read); if(IsLoaded)_volumeIcon.Update(state); }
+        try { var state=await AudioService.ReadBackgroundAsync(); if(IsLoaded)_volumeIcon.Update(state); }
         finally { _readingVolume=false; }
     }
     internal void ObserveAudioState(AudioState state)=>_volumeIcon.Update(state);

@@ -1,12 +1,12 @@
 # Veyra
 
-[下载 Windows 单文件版](https://github.com/M1vvl/Veyra/releases/latest) · [直接下载 1.0.0 EXE](https://github.com/M1vvl/Veyra/releases/download/v1.0.0/Veyra.exe)
+[下载 Windows 单文件版](https://github.com/M1vvl/Veyra/releases/latest) · [直接下载 1.0.1 EXE](https://github.com/M1vvl/Veyra/releases/download/v1.0.1/Veyra.exe)
 
 Veyra 是采用 Liquid Glass 材质的 Windows 桌面工具，提供 Dock、右侧状态栏、控制中心和映射收纳盒。
 
 打开发布页，在 Assets 中下载 `Veyra.exe`，保存到自己的文件夹后双击运行。程序自带运行时，首次启动会自动展开依赖并短暂等待。支持 Windows 11 x64。
 
-同时下载并解压 `Veyra-1.0.0-Licenses.zip`，保存随附的第三方许可。`SHA256SUMS.txt` 提供文件校验值。
+同时下载并解压 `Veyra-1.0.1-Licenses.zip`，保存随附的第三方许可。`SHA256SUMS.txt` 提供文件校验值。
 
 仓库 Code 页面提供完整开发源码，可直接运行的软件在 Releases。构建需要 Windows 和 .NET 8 SDK，在源码根目录运行以下命令。
 
@@ -39,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 本项目自有代码沿用仓库的 MIT 许可。第三方组件分别遵循各自许可，详见 [LICENSE](LICENSE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [licenses](licenses)。
 
-收纳盒吸附几何适配自 WitchDrawer，其相关代码遵循 PolyForm Noncommercial 1.0.0。包含该组件的分发与使用须遵守其非商业许可及 Required Notice，具体条款见 [WitchDrawer 许可](src/Veyra/ThirdParty/WitchDrawer/LICENSE.txt) 与 [版权说明](src/Veyra/ThirdParty/WitchDrawer/NOTICE.md)。
+收纳盒吸附几何适配自 WitchDrawer，其相关代码遵循 PolyForm Noncommercial 1.0.1。包含该组件的分发与使用须遵守其非商业许可及 Required Notice，具体条款见 [WitchDrawer 许可](src/Veyra/ThirdParty/WitchDrawer/LICENSE.txt) 与 [版权说明](src/Veyra/ThirdParty/WitchDrawer/NOTICE.md)。
 
 本软件按现状提供。在适用法律允许的范围内，作者和贡献者不对其适用性、可靠性或准确性作出明示或暗示的保证，也不承担使用本软件产生的损失责任。使用者应遵守所在地法律及相关第三方许可。
 

@@ -20,7 +20,6 @@ internal sealed class QuickControlsWindow : GlassWindow
     private readonly StackPanel _body=new() { Margin=new Thickness(0,6,0,0) };
     private readonly TextBlock _heading=Ui.Text("控制中心",20);
     private readonly TextBlock _status=Ui.Text("",12,Secondary);
-    private readonly AudioService _audio=new();
     private readonly BrightnessService _brightness;
     private readonly Dictionary<ControlSection, Button> _tabs = [];
     private TrayPanel? _trayPanel;
@@ -29,7 +28,7 @@ internal sealed class QuickControlsWindow : GlassWindow
     private bool _darkBackground,_contrastInitialized;
     private readonly DispatcherTimer _audioDelay=new() { Interval=TimeSpan.FromMilliseconds(90) };
     private double _pendingVolume;
-    private bool _volumePending;
+    private bool _volumePending,_volumeWriting;
     private int _generation;
     private bool _closed;
     private bool _sectionReady;
@@ -61,7 +60,7 @@ internal sealed class QuickControlsWindow : GlassWindow
         Deactivated+=(_,_)=> { if(!Program.CapturePreview && IsVisible && Program.TrayMenus?.Active!=true && !_sidebar.IsRailInteraction) Close(); };
         PreviewKeyDown+=(_,e)=> { if(e.Key==Key.Escape) { e.Handled=true; Close(); } };
         _audioDelay.Tick+=(_,_)=>CommitVolume();
-        Closed+=(_,_)=> { CommitVolume(); _closed=true; _generation++; _audio.Dispose(); _brightness.Dispose(); _trayPanel?.Dispose(); };
+        Closed+=(_,_)=> { CommitVolume(); _closed=true; _generation++; _brightness.Dispose(); _trayPanel?.Dispose(); };
     }
     public void PositionBeside(SidebarWindow sidebar)
     {
@@ -144,9 +143,10 @@ internal sealed class QuickControlsWindow : GlassWindow
                 case ControlSection.Calendar: BuildCalendar(); break;
                 case ControlSection.Apps: BuildApps(); break;
                 case ControlSection.Power: BuildPower(); await AddBrightness(generation); break;
-                case ControlSection.Audio: BuildAudio(); await AddBrightness(generation); break;
+                case ControlSection.Audio: await BuildAudioAsync(generation); await AddBrightness(generation); break;
                 default:
-                    BuildAudio();
+                    await BuildAudioAsync(generation);
+                    if(!Current(generation)) return;
                     var radioCard=Card("无线连接");
                     var wifiTask=WifiService.GetSnapshotAsync(); var bluetoothTask=RadioService.ReadBluetoothAsync(); var brightnessTask=AddBrightness(generation);
                     var wifi=await wifiTask; var bluetooth=await bluetoothTask;
@@ -192,8 +192,24 @@ internal sealed class QuickControlsWindow : GlassWindow
     private async void Run(Func<Task> action) { try { await action(); } catch(Exception ex) { Status(ex.Message); } }
     private void CommitVolume()
     {
-        _audioDelay.Stop(); if(!_volumePending) return; _volumePending=false;
-        var result=_audio.SetVolume(_pendingVolume); _sidebar.ObserveAudioState(result); if(!result.Available) Status(result.Error);
+        _audioDelay.Stop();
+        if(!_volumePending || _volumeWriting)return;
+        _=WriteVolumeAsync();
+    }
+    private async Task WriteVolumeAsync()
+    {
+        _volumeWriting=true;
+        try
+        {
+            while(_volumePending)
+            {
+                double volume=_pendingVolume; _volumePending=false;
+                var result=await AudioService.SetVolumeBackgroundAsync(volume);
+                if(!_closed) { _sidebar.ObserveAudioState(result); if(!result.Available) Status(result.Error); }
+            }
+        }
+        catch(Exception ex) { if(!_closed)Status(ex.Message); }
+        finally { _volumeWriting=false; }
     }
     private StackPanel Card(string title,FrameworkElement? trailing=null)
     {
@@ -247,9 +263,12 @@ internal sealed class QuickControlsWindow : GlassWindow
         var slider=new UnifiedSlider { Minimum=0,Maximum=100,Value=value*100,ToolTip=label,Style=ControlStyles.Slider,SmallChange=1,LargeChange=10 };
         System.Windows.Automation.AutomationProperties.SetName(slider,label); return slider;
     }
-    private void BuildAudio()
+    private async Task BuildAudioAsync(int generation)
     {
-        var state=_audio.Read(); var value=Ui.Text(state.Available?$"{Math.Round(state.Volume*100)}%":"不可用",12,Secondary); var card=Card("声音",value);
+        var value=Ui.Text("—",12,Secondary); var card=Card("声音",value);
+        var state=await AudioService.ReadBackgroundAsync();
+        if(!Current(generation))return;
+        value.Text=state.Available?$"{Math.Round(state.Volume*100)}%":"不可用";
         _sidebar.ObserveAudioState(state);
         if(!state.Available) { card.ToolTip=state.Error; return; }
         var slider=ValueSlider(state.Volume,"系统主音量");

@@ -35,6 +35,9 @@ internal sealed class DockWindow : GlassWindow
     private Point? _entryPoint;
     private Button? _moreButton;
     private readonly List<PinnedApp> _pins;
+    private readonly WindowDiscovery _discovery;
+    private bool _refreshingWindows,_closed;
+    private IReadOnlyList<PinnedApp> _runningApps=Array.Empty<PinnedApp>();
     private IReadOnlyList<WindowSnapshot> _windows=Array.Empty<WindowSnapshot>();
     private readonly DispatcherTimer _statusTimer=new() { Interval=TimeSpan.FromSeconds(3) };
     private readonly DispatcherTimer _activeTimer=new() { Interval=TimeSpan.FromMilliseconds(220) };
@@ -56,8 +59,9 @@ internal sealed class DockWindow : GlassWindow
     private int _capacity=12;
     private string _runningKey="";
     private int _allCount;
-    public DockWindow() : base("Veyra · Dock")
+    internal DockWindow(WindowDiscovery? discovery=null) : base("Veyra · Dock")
     {
+        _discovery=discovery??new WindowDiscovery();
         Topmost=false;
         Opacity=0;
         _foregroundCallback=OnForegroundChanged;
@@ -93,6 +97,7 @@ internal sealed class DockWindow : GlassWindow
         _activeTimer.Tick+=(_,_)=> { UpdateDesktopPresentation(); UpdateActiveFrame(); };
         _statusTimer.Tick+=(_,_)=>RefreshWindows();
         Closed+=(_,_)=> {
+            _closed=true;
             if(_foregroundHook!=0) DesktopNative.UnhookWinEvent(_foregroundHook);
             _layer?.Dispose();
             _statusTimer.Stop(); _activeTimer.Stop(); StopAnimation();
@@ -206,17 +211,23 @@ internal sealed class DockWindow : GlassWindow
         _appliedIconSize=Program.Prefs.IconSize; _appliedDockScale=Program.Prefs.DockScale; _appliedMagnification=Program.Prefs.Magnification;
         if(icons)Rebuild(); else if(layout)Reposition(); else if(_animating || Program.Prefs.ReducedMotion)StartAnimation();
     }
-    private void RefreshWindows()
+    private async void RefreshWindows()
     {
-        if(_desktopSuspended)return;
+        if(_desktopSuspended || _closed || _refreshingWindows)return;
+        _refreshingWindows=true;
         try
         {
-            _windows=WindowService.GetAllWindows();
+            var snapshot=await _discovery.ReadAsync(_pins.ToArray());
+            if(_closed || _desktopSuspended)return;
+            _windows=snapshot.Windows;
+            _runningApps=snapshot.Running;
             var ordered=GetOrderedApps(out int inactiveCount);
             var key=inactiveCount+":"+string.Join('|',ordered.Select(app=>app.Identity));
             if(key!=_runningKey) { _runningKey=key; Rebuild(); }
             UpdateActiveFrame(true);
-        } catch(Exception ex) { Program.Log(ex.Message); }
+        }
+        catch(Exception ex) { Program.Log("Window discovery: "+ex.Message); }
+        finally { _refreshingWindows=false; }
     }
     private void UpdateActiveFrame(bool force=false)
     {
@@ -279,7 +290,7 @@ internal sealed class DockWindow : GlassWindow
             if(windows.Count==0) inactive.Add(pin);
             else { active.Add(pin); foreach(var window in windows) represented.Add(window.Handle); }
         }
-        foreach(var running in WindowService.GetRunningApps(_windows))
+        foreach(var running in _runningApps)
         {
             var windows=WindowService.GetWindows(running,_windows);
             if(windows.Count==0 || windows.All(window=>represented.Contains(window.Handle))) continue;

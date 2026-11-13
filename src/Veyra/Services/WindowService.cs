@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
@@ -43,6 +44,14 @@ public static class WindowService
         return windows;
     }
 
+    private static readonly ConcurrentDictionary<string, bool> DirectoryTargets = new(StringComparer.OrdinalIgnoreCase);
+    internal static void RefreshDirectoryTargets(IReadOnlyList<PinnedApp> pins)
+    {
+        var targets = pins.Select(app => app.Target.Length > 0 ? app.Target : app.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (string target in targets) DirectoryTargets[target] = Directory.Exists(target);
+        foreach (string stale in DirectoryTargets.Keys) if (!targets.Contains(stale)) DirectoryTargets.TryRemove(stale, out _);
+    }
+
     public static List<WindowSnapshot> GetWindows(PinnedApp app, IReadOnlyList<WindowSnapshot>? snapshot = null)
     {
         snapshot ??= GetAllWindows();
@@ -52,7 +61,7 @@ public static class WindowService
             if (identityMatches.Count > 0) return identityMatches;
         }
         var target = app.Target.Length > 0 ? app.Target : app.Path;
-        if (Directory.Exists(target)) target = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+        if (DirectoryTargets.TryGetValue(target, out bool directory) && directory) target = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
         if (!System.IO.Path.GetExtension(target).Equals(".exe", StringComparison.OrdinalIgnoreCase)) return [];
         return snapshot.Where(w => IsWindow(w.Handle) && w.ExecutablePath.Equals(target, StringComparison.OrdinalIgnoreCase)
             && (string.IsNullOrWhiteSpace(app.AppUserModelId) || string.IsNullOrWhiteSpace(w.AppUserModelId)

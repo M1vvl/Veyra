@@ -160,6 +160,7 @@ internal sealed class DesktopReferenceMonitor : IDisposable
     private static bool IsVolumeRoot(string path)=>string.Equals(path.TrimEnd('\\'),Path.GetPathRoot(path)?.TrimEnd('\\'),StringComparison.OrdinalIgnoreCase);
     private void RebuildWatches(string[] roots)
     {
+        using var activity=GlassDock.Services.UiResponsivenessMonitor.TrackActivity("file watcher setup");
         bool reset=Interlocked.Exchange(ref _resetWatches,0)!=0;
         foreach(var pair in _watchers.ToArray())
             if(reset || !roots.Contains(pair.Key,StringComparer.OrdinalIgnoreCase)) { pair.Value.Dispose(); _watchers.Remove(pair.Key); }
