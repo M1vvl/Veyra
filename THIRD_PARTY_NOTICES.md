@@ -11,3 +11,5 @@ The source project also references Vortice.Direct3D11, Vortice.DXGI, Vortice.D3D
 `src/Veyra/ThirdParty/WitchDrawer` includes an adapted snapping geometry implementation, its original PolyForm Noncommercial 1.0.0 license and required notice. The original development checkout uses `src/GlassDock` for this same project.
 
 The independent `optics-webgl` scene bundles Three.js 0.187.0 under the MIT license. Its license is included in `optics-webgl/THREE-LICENSE.txt`. esbuild 0.28.2 is a build dependency recorded in that scene's package lockfile.
+
+The read-only NetEase playback-clock discovery algorithm in `Music/NeteaseBackgroundClock.cs` is adapted from maker114/netease-lyric-api, Copyright (c) 2026 maker114, under the MIT license. Its license is included in `src/Veyra/ThirdParty/NetEaseClock/LICENSE.txt` and `licenses/NetEaseClock-MIT.txt`.

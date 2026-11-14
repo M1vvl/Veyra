@@ -23,7 +23,7 @@ internal sealed class DesktopGroupPresentation : IDisposable
     private void Commit(object? sender,EventArgs args)
     {
         if(_valid?.Invoke()!=true) {Cancel(); return;}
-        bool ready=_windows.All(window=>window.IsVisible && (!Program.Prefs.GlassEnabled || Program.Prefs.GlassTransparency>=1 || window.HasMaterialImage));
+        bool ready=_windows.All(window=>window.IsVisible && (Program.Prefs.GlassTransparency>=1 || window.HasMaterialImage));
         if(!ready && _clock.ElapsedMilliseconds<350)return;
         // All opacity updates belong to this one WPF/DWM display turn.
         foreach(var window in _windows) {window.Opacity=1; window.IsHitTestVisible=true;}

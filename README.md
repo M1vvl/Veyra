@@ -1,12 +1,12 @@
 # Veyra
 
-[下载 Windows 单文件版](https://github.com/M1vvl/Veyra/releases/latest) · [直接下载 1.0.1 EXE](https://github.com/M1vvl/Veyra/releases/download/v1.0.1/Veyra.exe)
+[下载 Windows 单文件版](https://github.com/M1vvl/Veyra/releases/latest) · [直接下载 1.0.2 EXE](https://github.com/M1vvl/Veyra/releases/download/v1.0.2/Veyra.exe)
 
 Veyra 是采用 Liquid Glass 材质的 Windows 桌面工具，提供 Dock、右侧状态栏、控制中心和映射收纳盒。
 
 打开发布页，在 Assets 中下载 `Veyra.exe`，保存到自己的文件夹后双击运行。程序自带运行时，首次启动会自动展开依赖并短暂等待。支持 Windows 11 x64。
 
-同时下载并解压 `Veyra-1.0.1-Licenses.zip`，保存随附的第三方许可。`SHA256SUMS.txt` 提供文件校验值。
+同时下载并解压 `Veyra-1.0.2-Licenses.zip`，保存随附的第三方许可。`SHA256SUMS.txt` 提供文件校验值。
 
 仓库 Code 页面提供完整开发源码，可直接运行的软件在 Releases。构建需要 Windows 和 .NET 8 SDK，在源码根目录运行以下命令。
 
@@ -24,6 +24,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 - 收纳盒收起后，同列下方盒子自动补位，展开时恢复间距。
 - 设置支持玻璃透明度、Dock 尺寸、图标大小、磁吸和材质刷新率，并提供独立重置。
 - 最大化或全屏应用覆盖桌面时暂停相关渲染，返回桌面后恢复。
+- 音乐灵动岛支持旋转封面、长歌词滚动及展开过渡，关闭组件会停止媒体读取并释放专用资源。进度拖动需要播放器支持系统媒体定位接口，当前网易云后台适配支持读取进度。
 
 ## 使用
 
@@ -48,5 +49,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 Veyra 当前版本不包含用户数据收集、遥测或自动上传模块。偏好、Dock 固定项、收纳盒路径引用和诊断日志保存在本机用户目录。
 
 音量、亮度、输入法、网络与托盘功能通过本机 Windows 接口交互。使用网络连接或打开第三方应用时，相关通信与数据处理受 Windows、网络服务及对应应用的隐私政策约束。
+
+启用音乐灵动岛后，组件通过 Windows 媒体会话读取播放信息。网易云后台时间轴缺失时，在本机以只读方式识别播放进度。歌词优先读取本地 LRC，随后按歌曲 ID、标题或歌手向网易云、QQ 音乐接口查询，相关服务会收到查询内容。关闭灵动岛后停止这些读取和请求。
 
 开发构建需要从 NuGet 获取依赖，独立光学核对场景的构建需要 npm 依赖。

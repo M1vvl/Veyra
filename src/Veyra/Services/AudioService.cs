@@ -89,6 +89,31 @@ public sealed class AudioService : IDisposable
         return new AudioState(Math.Clamp(volume, 0, 1), muted, true, null);
     }
 
+    internal static float ReadOutputPeak()
+    {
+        IMMDeviceEnumerator? enumerator=null;
+        IMMDevice? device=null;
+        object? meter=null;
+        int initialized=CoInitializeEx(0,0);
+        try
+        {
+            enumerator=(IMMDeviceEnumerator)new MMDeviceEnumerator();
+            Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0,1,out device));
+            Guid id=typeof(IAudioMeterInformation).GUID;
+            Marshal.ThrowExceptionForHR(device.Activate(ref id,23,0,out meter));
+            Marshal.ThrowExceptionForHR(((IAudioMeterInformation)meter).GetPeakValue(out float value));
+            return Math.Clamp(value,0,1);
+        }
+        catch(COMException) {return 0;}
+        finally {Release(meter); Release(device); Release(enumerator); if(initialized>=0)CoUninitialize();}
+    }
+
+    [ComImport,Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IAudioMeterInformation
+    {
+        [PreserveSig] int GetPeakValue(out float peak);
+    }
+
     private static AudioState Unavailable(string message) => new(0, false, false, message);
     private static void Release(object? value)
     {

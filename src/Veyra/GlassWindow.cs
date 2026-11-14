@@ -11,7 +11,7 @@ namespace GlassDock;
 internal abstract class GlassWindow : Window
 {
     protected readonly Canvas Root = new();
-    protected readonly Border Fallback = new() { Background=new SolidColorBrush(Color.FromArgb(224,231,238,246)), IsHitTestVisible=false };
+    protected readonly Border Fallback = new() { Background=new SolidColorBrush(Color.FromArgb(76,231,238,246)), IsHitTestVisible=false };
     protected readonly Image Glass = new() { Stretch=Stretch.Fill, IsHitTestVisible=false };
     protected readonly Grid ContentLayer = new();
     private const double ShadowPadding = 6;
@@ -55,6 +55,7 @@ internal abstract class GlassWindow : Window
         }
     }
     protected double ContentScale=1;
+    protected virtual Size MaterialAllocationSize=>Size.Empty;
     private string? _lastRenderError;
     private bool _presenting;
     private TimeSpan _lastPresentationTime=TimeSpan.MinValue;
@@ -104,7 +105,7 @@ internal abstract class GlassWindow : Window
         Glass.Opacity=Fallback.Opacity=1-Program.Prefs.GlassTransparency;
         foreach(var card in _glassCards)card.ApplyTransparency();
         _glassTimer.Interval=TimeSpan.FromMilliseconds(1000d/Program.Prefs.GlassFramesPerSecond);
-        if(!Program.Prefs.GlassEnabled || Program.Prefs.GlassTransparency>=1) {_glassTimer.Stop(); ReleaseMaterial(true);}
+        if(Program.Prefs.GlassTransparency>=1) {_glassTimer.Stop(); ReleaseMaterial(true);}
         else if(CanRenderMaterial && !_glassTimer.IsEnabled)_glassTimer.Start();
     }
     protected void ReleaseMaterial(bool clearImage=false)
@@ -134,7 +135,7 @@ internal abstract class GlassWindow : Window
     protected void RenderGlass()
     {
         using var activity=GlassDock.Services.UiResponsivenessMonitor.TrackActivity("glass frame rendering");
-        if(!CanRenderMaterial) { ReleaseMaterial(!Program.Prefs.GlassEnabled); return; }
+        if(!CanRenderMaterial) { ReleaseMaterial(false); return; }
         try
         {
             _renderer??=new GlassRenderer();
@@ -143,15 +144,18 @@ internal abstract class GlassWindow : Window
             var start=Root.PointToScreen(materialBounds.TopLeft); var end=Root.PointToScreen(materialBounds.BottomRight);
             var region=new Int32Rect((int)Math.Round(start.X),(int)Math.Round(start.Y),Math.Max(1,(int)Math.Round(end.X-start.X)),Math.Max(1,(int)Math.Round(end.Y-start.Y)));
             var dpi=VisualTreeHelper.GetDpi(this).DpiScaleX*ContentScale;
+            var allocation=MaterialAllocationSize;
             var options=new GlassOptions {
                 CornerRadiusPixels=(float)(Radius*dpi),
                 SurfaceInsetPixels=(float)((2+ShadowPadding)*dpi),
                 ThicknessPixels=(float)(8*dpi),
                 NormalTransitionPixels=(float)(12.5*dpi),
                 BackgroundDistancePixels=(float)(24*dpi),
-                Tint=.035f
+                Tint=.035f,
+                AllocationWidthPixels=allocation.IsEmpty?0:(int)Math.Ceiling(allocation.Width*dpi),
+                AllocationHeightPixels=allocation.IsEmpty?0:(int)Math.Ceiling(allocation.Height*dpi)
             };
-            if(_renderer.TryRender(region,options,out var image) && image is not null)
+            if(_renderer.TryRender(region,GlassMaterialProfile.Apply(options),out var image) && image is not null)
             {
                 if(_renderer.LastFrameUpdated || Glass.Source!=image) PresentFrame(image);
             }
@@ -164,7 +168,7 @@ internal abstract class GlassWindow : Window
         foreach(var card in _glassCards) card.RenderMaterial();
         UpdatePresentation();
     }
-    private bool CanRenderMaterial => IsLoaded && IsVisible && SurfaceVisible && Program.Prefs.GlassEnabled && Program.Prefs.GlassTransparency<1 && Surface.Width>=1 && Surface.Height>=1;
+    private bool CanRenderMaterial => IsLoaded && IsVisible && SurfaceVisible && Program.Prefs.GlassTransparency<1 && Surface.Width>=1 && Surface.Height>=1;
     private void PresentFrame(BitmapSource image)
     {
         Glass.Source=image; Fallback.Visibility=Visibility.Hidden;
@@ -192,7 +196,7 @@ internal abstract class GlassWindow : Window
     }
     private void PresentPendingFrame(object? sender,EventArgs e)
     {
-        if(!CanRenderMaterial) { ReleaseMaterial(!Program.Prefs.GlassEnabled); return; }
+        if(!CanRenderMaterial) { ReleaseMaterial(false); return; }
         if(e is RenderingEventArgs rendering)
         {
             if(rendering.RenderingTime==_lastPresentationTime) return;

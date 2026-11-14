@@ -93,6 +93,34 @@ public static class WindowService
             }).ToList();
     }
 
+    public static void CloseWindows(IEnumerable<WindowSnapshot> windows)
+    {
+        foreach(var window in windows)
+            if(IsWindow(window.Handle) && GetWindowThreadProcessId(window.Handle,out uint pid)!=0 && pid==window.ProcessId)
+                PostMessage(window.Handle,0x0010,0,0); // WM_CLOSE allows the application to save or cancel.
+    }
+
+    public static void EndProcesses(IEnumerable<WindowSnapshot> windows)
+    {
+        var failures=new List<string>();
+        foreach(var window in windows.DistinctBy(item=>item.ProcessId))
+        {
+            try
+            {
+                if(window.ProcessId==Environment.ProcessId || !IsWindow(window.Handle) || GetWindowThreadProcessId(window.Handle,out uint pid)==0 || pid!=window.ProcessId) continue;
+                using var process=Process.GetProcessById((int)pid);
+                string path=process.MainModule?.FileName ?? "";
+                if(!path.Equals(window.ExecutablePath,StringComparison.OrdinalIgnoreCase)) continue;
+                if(Path.GetFileName(path).Equals("explorer.exe",StringComparison.OrdinalIgnoreCase) || Path.GetFileName(path).Equals("ApplicationFrameHost.exe",StringComparison.OrdinalIgnoreCase)) { failures.Add("共享系统进程不能结束"); continue; }
+                process.Kill();
+            }
+            catch(Exception ex) when(ex is InvalidOperationException or System.ComponentModel.Win32Exception or ArgumentException or UnauthorizedAccessException) {failures.Add(ex.Message);}
+        }
+        if(failures.Count>0) System.Windows.MessageBox.Show(string.Join("\n",failures),"Veyra");
+    }
+
+    [DllImport("user32.dll")] private static extern bool PostMessage(nint window,uint message,nuint wParam,nint lParam);
+
     public static bool Activate(WindowSnapshot window) => Activate(window.Handle);
 
     public static bool Activate(nint hwnd)

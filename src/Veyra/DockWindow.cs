@@ -258,11 +258,11 @@ internal sealed class DockWindow : GlassWindow
         _runningBoundary=all.Count>inactiveCount && _page+available>inactiveCount ? 2+Math.Max(0,inactiveCount-_page) : -1;
         foreach(var app in all.Skip(_page).Take(available))
         {
-            if(_itemCache.TryGetValue(app.Identity,out var existing)) { AddItem(app.Identity,app,existing.Visual,app.Name,()=>WindowService.ActivateOrLaunch(app,_windows)); continue; }
+            if(_itemCache.TryGetValue(app.Identity,out var existing)) { AddItem(app.Identity,app,existing.Visual,app.Name,()=>ActivateDockApp(app)); continue; }
             var image=new Image { Width=Program.Prefs.IconSize, Height=Program.Prefs.IconSize, Stretch=Stretch.Uniform };
             LoadIcon(image,app);
             RenderOptions.SetBitmapScalingMode(image,BitmapScalingMode.HighQuality);
-            AddItem(app.Identity,app,image,app.Name,()=>WindowService.ActivateOrLaunch(app,_windows));
+            AddItem(app.Identity,app,image,app.Name,()=>ActivateDockApp(app));
         }
         foreach(var removed in previous.Where(item=>!_items.Contains(item)))
         {
@@ -277,6 +277,25 @@ internal sealed class DockWindow : GlassWindow
         }
         Reposition();
         _entryPoint=null;
+    }
+    private void ActivateDockApp(PinnedApp app)
+    {
+        if(WindowService.GetWindows(app,_windows).Count==0 && Program.TrayHost is { } tray)
+        {
+            string target=string.IsNullOrWhiteSpace(app.Target)?app.Path:app.Target;
+            var icon=tray.Snapshot.FirstOrDefault(item=>!string.IsNullOrWhiteSpace(item.OwnerPath)
+                && item.OwnerPath.Equals(target,StringComparison.OrdinalIgnoreCase));
+            if(icon is not null)
+            {
+                var button=_items.FirstOrDefault(item=>item.App?.Identity==app.Identity)?.Button;
+                if(button is not null && PresentationSource.FromVisual(button) is not null)
+                {
+                    var anchor=button.PointToScreen(new Point(button.ActualWidth/2,button.ActualHeight/2));
+                    if(tray.Invoke(icon.Key,TrayClick.Double,anchor)) return;
+                }
+            }
+        }
+        WindowService.ActivateOrLaunch(app,_windows);
     }
     private List<PinnedApp> GetOrderedApps(out int inactiveCount)
     {
@@ -362,7 +381,13 @@ internal sealed class DockWindow : GlassWindow
             menu.Items.Clear();
             var windows=WindowService.GetWindows(contextApp,_windows);
             foreach(var window in windows.Take(12)) { var captured=window; menu.Items.Add(Ui.Menu(window.Title,()=>WindowService.Activate(captured))); }
-            if(windows.Count>0) menu.Items.Add(new Separator());
+            if(windows.Count>0)
+            {
+                menu.Items.Add(new Separator());
+                menu.Items.Add(Ui.Menu("关闭软件窗口",()=>WindowService.CloseWindows(WindowService.GetWindows(contextApp,_windows))));
+                menu.Items.Add(Ui.Menu("结束进程",()=>WindowService.EndProcesses(WindowService.GetWindows(contextApp,_windows))));
+                menu.Items.Add(new Separator());
+            }
             menu.Items.Add(Ui.Menu("打开新窗口",()=>WindowService.ActivateOrLaunch(contextApp,Array.Empty<WindowSnapshot>())));
             if(_pins.Any(p=>p.Id==contextApp.Id)) {
                 menu.Items.Add(Ui.Menu("向左移动",()=>MovePin(contextApp,-1))); menu.Items.Add(Ui.Menu("向右移动",()=>MovePin(contextApp,1)));

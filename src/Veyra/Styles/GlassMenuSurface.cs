@@ -47,7 +47,7 @@ public sealed class GlassMenuSurface : Decorator
     {
         drawing.PushOpacity(1-Program.Prefs.GlassTransparency);
         if(_frame is not null) drawing.DrawImage(_frame,new Rect(-6,-6,ActualWidth+12,ActualHeight+12));
-        else drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(232,32,39,47)),new Pen(new SolidColorBrush(Color.FromArgb(65,255,255,255)),.7),new Rect(0,0,ActualWidth,ActualHeight),17,17);
+        else drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(96,32,39,47)),new Pen(new SolidColorBrush(Color.FromArgb(65,255,255,255)),.7),new Rect(0,0,ActualWidth,ActualHeight),17,17);
         drawing.Pop();
     }
     private void RenderMaterial()
@@ -56,14 +56,13 @@ public sealed class GlassMenuSurface : Decorator
         ApplyInk(_ink);
         if(_appliedTransparency!=Program.Prefs.GlassTransparency) {_appliedTransparency=Program.Prefs.GlassTransparency; InvalidateVisual();}
         if(Program.Prefs.GlassTransparency>=1) {StopPresentation(); _renderer?.Dispose(); _renderer=null; _frame=null; return;}
-        if(!Program.Prefs.GlassEnabled) { ApplyInk(Brushes.White); return; }
         try
         {
             var a=PointToScreen(new Point(-6,-6)); var b=PointToScreen(new Point(ActualWidth+6,ActualHeight+6));
             double dpi=VisualTreeHelper.GetDpi(this).DpiScaleX;
             _renderer??=new GlassRenderer();
             if(_renderer.TryRender(new Int32Rect((int)Math.Round(a.X),(int)Math.Round(a.Y),Math.Max(1,(int)Math.Round(b.X-a.X)),Math.Max(1,(int)Math.Round(b.Y-a.Y))),
-                new GlassOptions { CornerRadiusPixels=(float)(17*dpi),SurfaceInsetPixels=(float)(7*dpi),ThicknessPixels=(float)(8*dpi),NormalTransitionPixels=(float)(12.5*dpi),BackgroundDistancePixels=(float)(24*dpi),Tint=.035f },out var frame) && frame is not null)
+                GlassMaterialProfile.Apply(new GlassOptions { CornerRadiusPixels=(float)(17*dpi),SurfaceInsetPixels=(float)(7*dpi),ThicknessPixels=(float)(8*dpi),NormalTransitionPixels=(float)(12.5*dpi),BackgroundDistancePixels=(float)(24*dpi),Tint=.035f }),out var frame) && frame is not null)
                 if(_renderer.LastFrameUpdated || frame!=_frame) Present(frame);
             if(_renderer.HasPendingFrame && !_presenting) { _presenting=true; CompositionTarget.Rendering+=PresentPending; }
         }

@@ -105,7 +105,6 @@ internal sealed class QuickControlsWindow : GlassWindow
     public override void ApplyPreferences()
     {
         base.ApplyPreferences();
-        if(!Program.Prefs.GlassEnabled) OnMaterialLuminance(.85);
     }
     protected override void OnMaterialLuminance(double luminance)
     {

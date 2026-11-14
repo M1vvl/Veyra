@@ -12,6 +12,8 @@ public sealed record GlassOptions
     public float Dispersion { get; init; } = 0.009f;
     public float Roughness { get; init; } = 0.32f;
     public float Tint { get; init; } = 0.035f;
+    public int AllocationWidthPixels { get; init; }
+    public int AllocationHeightPixels { get; init; }
     // Null advances the four grazing lights at up to 4 Hz on a static background.
     // Zero explicitly freezes the light pose; setting a new value intentionally requests a frame.
     public float? LightTimeSeconds { get; init; }

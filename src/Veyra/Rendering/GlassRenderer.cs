@@ -68,8 +68,12 @@ public sealed partial class GlassRenderer : IDisposable
     private readonly ID3D11Texture2D?[] _readback = new ID3D11Texture2D?[2];
     private readonly long[] _pendingReadback = new long[2];
     private readonly float[] _pendingLightTime = new float[2];
+    private readonly Int32Rect[] _pendingFrameBounds=new Int32Rect[2];
     private long _readbackSequence;
     private WriteableBitmap? _bitmap;
+    private BitmapSource? _visibleBitmap;
+    private Int32Rect _presentedFrameBounds;
+    private int _allocationWidth,_allocationHeight;
     private BitmapSource? _retainedFrame;
     private Int32Rect _monitorBounds, _captureBounds, _outputBounds;
     private GlassOptions? _lastOptions;
@@ -103,9 +107,9 @@ public sealed partial class GlassRenderer : IDisposable
                 width=Math.Max(1,width/2); height=Math.Max(1,height/2);
             }
         }
-        long materialBytes=(long)_outputBounds.Width*_outputBounds.Height*4;
+        long materialBytes=(long)_allocationWidth*_allocationHeight*4;
         long bitmapBytes=_bitmap is null?0:materialBytes;
-        if(_retainedFrame is not null && !ReferenceEquals(_retainedFrame,_bitmap))
+        if(_retainedFrame is not null && !ReferenceEquals(_retainedFrame,_visibleBitmap))
             bitmapBytes+=(long)_retainedFrame.PixelWidth*_retainedFrame.PixelHeight*4;
         return new {
             AllocationGeneration,StagingTextureCount,
@@ -151,7 +155,7 @@ public sealed partial class GlassRenderer : IDisposable
             _stage="acquiring shared desktop output";
             EnsureDevice(screenRegion);
             _stage="allocating regional surfaces";
-            bool regionChanged = EnsureSurfaces(screenRegion);
+            bool regionChanged = EnsureSurfaces(screenRegion,options);
             _stage="reading completed material frame";
             ReadbackReadyFrame();
             _stage="capturing/cropping desktop background";
@@ -167,7 +171,7 @@ public sealed partial class GlassRenderer : IDisposable
                 _lastOptions = options;
                 _materialDirty = false;
             }
-            frame = _hasMaterial ? _bitmap : _retainedFrame;
+            frame = _hasMaterial ? _visibleBitmap : _retainedFrame;
             if(!IsTemporarilyUnavailable) LastError = null;
             return frame is not null;
         }
@@ -196,7 +200,7 @@ public sealed partial class GlassRenderer : IDisposable
         {
             ReadbackReadyFrame();
             if (!LastFrameUpdated) return false;
-            frame = _bitmap;
+            frame = _visibleBitmap;
             return frame is not null;
         }
         catch (Exception ex) when (ex is SharpGenException or InvalidOperationException or ArgumentException)
@@ -376,12 +380,16 @@ public sealed partial class GlassRenderer : IDisposable
         _parameters = _device!.CreateBuffer(new BufferDescription(64, BindFlags.ConstantBuffer));
     }
 
-    private bool EnsureSurfaces(Int32Rect region)
+    private bool EnsureSurfaces(Int32Rect region,GlassOptions? options=null)
     {
-        if (_outputBounds == region && _paintComposeRT is not null) return false;
+        options??=new GlassOptions();
+        int allocationWidth=Math.Max(region.Width,options.AllocationWidthPixels);
+        int allocationHeight=Math.Max(region.Height,options.AllocationHeightPixels);
+        if (_outputBounds == region && _paintComposeRT is not null &&
+            _allocationWidth==allocationWidth && _allocationHeight==allocationHeight)return false;
         // Keep real pixels outside the glass for outer-rim bleed. Clip only at monitor bounds.
         const int bleedPadding = 72;
-        int captureWidth=Math.Min(_monitorBounds.Width,region.Width+2*bleedPadding),captureHeight=Math.Min(_monitorBounds.Height,region.Height+2*bleedPadding);
+        int captureWidth=Math.Min(_monitorBounds.Width,allocationWidth+2*bleedPadding),captureHeight=Math.Min(_monitorBounds.Height,allocationHeight+2*bleedPadding);
         // Shift the regional crop inward at monitor edges instead of changing its
         // dimensions and reallocating every GPU/readback/WPF surface while dragging.
         int left=Math.Clamp(region.X-bleedPadding,_monitorBounds.X,_monitorBounds.X+_monitorBounds.Width-captureWidth);
@@ -390,7 +398,7 @@ public sealed partial class GlassRenderer : IDisposable
         if (right <= left || bottom <= top) throw new InvalidOperationException("Glass surface is outside its monitor.");
         var captureBounds = new Int32Rect(left,top,right-left,bottom-top);
         bool canReuse = _paintComposeRT is not null
-            && _outputBounds.Width==region.Width && _outputBounds.Height==region.Height
+            && _allocationWidth==allocationWidth && _allocationHeight==allocationHeight
             && _captureBounds.Width==captureBounds.Width && _captureBounds.Height==captureBounds.Height;
         if(canReuse)
         {
@@ -398,7 +406,8 @@ public sealed partial class GlassRenderer : IDisposable
             _captureBounds=captureBounds;
             // Copies use one immediate context. A newly queued copy runs after any
             // abandoned readback, so the existing staging resources remain safe.
-            Array.Clear(_pendingReadback);
+            if(options.AllocationWidthPixels==0 && options.AllocationHeightPixels==0)
+                Array.Clear(_pendingReadback);
             _hasBackground=false;
             _materialDirty=true;
             return true;
@@ -406,6 +415,8 @@ public sealed partial class GlassRenderer : IDisposable
         ReleaseSurfaces();
         _outputBounds=region;
         _captureBounds=captureBounds;
+        _allocationWidth=allocationWidth;
+        _allocationHeight=allocationHeight;
 
         // O1 BACKGROUND: GPU-only regional texture; GenerateMips creates SampleLevel LODs.
         _paintComposeRT = _device!.CreateTexture2D(new Texture2DDescription(
@@ -414,17 +425,17 @@ public sealed partial class GlassRenderer : IDisposable
             miscFlags: ResourceOptionFlags.GenerateMips));
         _backgroundView = _device.CreateShaderResourceView(_paintComposeRT);
         _outputTexture = _device.CreateTexture2D(new Texture2DDescription(
-            Format.B8G8R8A8_UNorm,(uint)region.Width,(uint)region.Height,mipLevels:1,
+            Format.B8G8R8A8_UNorm,(uint)allocationWidth,(uint)allocationHeight,mipLevels:1,
             bindFlags:BindFlags.RenderTarget));
         _outputView = _device.CreateRenderTargetView(_outputTexture);
         _readback[0]=CreateReadbackTexture();
-        _bitmap = new WriteableBitmap(region.Width,region.Height,96,96,PixelFormats.Pbgra32,null);
+        _bitmap = new WriteableBitmap(allocationWidth,allocationHeight,96,96,PixelFormats.Pbgra32,null);
         AllocationGeneration++;
         return true;
     }
 
     private ID3D11Texture2D CreateReadbackTexture() => _device!.CreateTexture2D(new Texture2DDescription(
-        Format.B8G8R8A8_UNorm,(uint)_outputBounds.Width,(uint)_outputBounds.Height,mipLevels:1,
+        Format.B8G8R8A8_UNorm,(uint)_allocationWidth,(uint)_allocationHeight,mipLevels:1,
         bindFlags:BindFlags.None,usage:ResourceUsage.Staging,cpuAccessFlags:CpuAccessFlags.Read));
 
     private bool CaptureBackground()
@@ -484,6 +495,7 @@ public sealed partial class GlassRenderer : IDisposable
         _context.UnsetRenderTargets();
         _context.CopyResource(_readback[slot]!,_outputTexture!);
         _pendingReadback[slot] = ++_readbackSequence;
+        _pendingFrameBounds[slot]=new Int32Rect(0,0,_outputBounds.Width,_outputBounds.Height);
         _pendingLightTime[slot]=parameters.Time;
         _restoreLightOnce=false;
         _context.Flush(); // Submit work without waiting for GPU completion.
@@ -505,11 +517,17 @@ public sealed partial class GlassRenderer : IDisposable
             try
             {
                 int stride = checked((int)mapped.RowPitch);
-                _bitmap!.WritePixels(new Int32Rect(0,0,_outputBounds.Width,_outputBounds.Height),
-                    mapped.DataPointer,checked(stride*_outputBounds.Height),stride);
+                var bounds=_pendingFrameBounds[slot];
+                _bitmap!.WritePixels(bounds,mapped.DataPointer,checked(stride*bounds.Height),stride);
+                if(_visibleBitmap is null || bounds!=_presentedFrameBounds)
+                {
+                    _visibleBitmap=bounds.Width==_allocationWidth && bounds.Height==_allocationHeight
+                        ?_bitmap:new CroppedBitmap(_bitmap,bounds);
+                    _presentedFrameBounds=bounds;
+                }
                 _hasMaterial = true;
                 _lastLightTime=_pendingLightTime[slot];
-                _retainedFrame=_bitmap;
+                _retainedFrame=_visibleBitmap;
                 IsTemporarilyUnavailable=false;
                 LastError=null;
                 _lightClock.Start();
@@ -536,6 +554,8 @@ public sealed partial class GlassRenderer : IDisposable
             _pendingReadback[i] = 0;
         }
         _bitmap = null;
+        _visibleBitmap=null;
+        _allocationWidth=_allocationHeight=0;
         _lastOptions = null;
         _hasBackground = false;
         _hasMaterial = false;

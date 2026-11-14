@@ -13,6 +13,7 @@ public static class Program
     private static Mutex? _singleInstance;
     internal static DockWindow? Dock;
     internal static SidebarWindow? Sidebar;
+    internal static Island.IslandWindow? Island;
     internal static Preferences Prefs = new();
     internal static TaskbarLease Lease = new();
     internal static TrayHostService? TrayHost;
@@ -81,6 +82,14 @@ public static class Program
             TaskbarLease.RestoreAbandonedLeases();
             Dock = new DockWindow(); Sidebar=new SidebarWindow();
             app.MainWindow=Dock; Dock.Show(); Sidebar.Show();
+
+            // 启动灵动岛屿
+            if (!Preview && Prefs.ShowIsland)
+            {
+                Island = new Island.IslandWindow();
+                Island.Show();
+            }
+
             if (!Preview && Prefs.ReplaceTaskbar) Lease.Enable();
             if(!Preview)
             {
@@ -110,7 +119,23 @@ public static class Program
         using var activity=GlassDock.Services.UiResponsivenessMonitor.TrackActivity("apply preferences");
         PreferencesPersistence.Schedule(Prefs.Validated());
         if (!Preview && Prefs.ReplaceTaskbar) {if(!Lease.IsEnabled)Lease.Enable();} else if(Lease.IsEnabled)Lease.Disable();
-        Dock?.ApplyPreferences(); Sidebar?.ApplyPreferences(); DesktopBoxes?.ApplyPreferences();
+
+        // 灵动岛屿开关
+        if (!Preview && Prefs.ShowIsland)
+        {
+            if (Island == null)
+            {
+                Island = new Island.IslandWindow();
+                Island.Show();
+            }
+        }
+        else if (Island != null)
+        {
+            Island.Close();
+            Island = null;
+        }
+
+        Dock?.ApplyPreferences(); Sidebar?.ApplyPreferences(); DesktopBoxes?.ApplyPreferences(); Island?.ApplyPreferences();
         foreach(var settings in Application.Current.Windows.OfType<SettingsWindow>())settings.ApplyPreferences();
     }
     internal static void OpenSettings()

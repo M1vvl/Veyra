@@ -189,9 +189,12 @@ float4 GlassPS(VertexOutput input) : SV_Target
     float innerWeight = max(0, 1-faceWeight-outerWeight);
     float weightSum = max(faceWeight+innerWeight+outerWeight, 0.0001);
     float3 weights = float3(faceWeight,innerWeight,outerWeight) / weightSum;
-    float3 face = sampleBackground(faceUv, 2.3);
-    float3 inner = sampleSpectrum(innerUv, rayR,rayG,rayB, 0.55);
-    float3 outer = sampleSpectrum(outerUv, rayR,rayG,rayB, 3.0);
+    // Broader microfacet roughness also softens transmitted background detail.
+    // The .32 Liquid Glass preset keeps the original sampling levels exactly.
+    float frostLod = max(uRoughness - 0.32, 0) * 8.0;
+    float3 face = sampleBackground(faceUv, 2.3 + frostLod);
+    float3 inner = sampleSpectrum(innerUv, rayR,rayG,rayB, 0.55 + frostLod * 0.35);
+    float3 outer = sampleSpectrum(outerUv, rayR,rayG,rayB, 3.0 + frostLod * 0.5);
     float3 refracted = face*weights.x + inner*weights.y + outer*weights.z;
 
     // O6: REFRACT -> external SHADOW -> TINT -> LIGHT, in that order.

@@ -40,6 +40,7 @@ internal sealed partial class SettingsWindow : GlassWindow
         AddSwitch(general,"开机启动",startup.Enabled,value=>StartupService.SetEnabled(value).Enabled,startup.Error);
         AddSwitch(general,"替代 Windows 任务栏",Program.Prefs.ReplaceTaskbar,value=> {Program.Prefs.ReplaceTaskbar=value; Program.ApplyPreferences(); return value;});
         AddSwitch(general,"固定右侧状态栏",Program.Prefs.SidebarPinned,value=> {Program.Prefs.SidebarPinned=value; Program.ApplyPreferences(); return value;});
+        AddSwitch(general,"显示灵动岛屿",Program.Prefs.ShowIsland,value=> {Program.Prefs.ShowIsland=value; Program.ApplyPreferences(); return value;});
         var material=Section("材质");
         AddSwitch(material,"Liquid Glass",Program.Prefs.GlassEnabled,value=> {Program.Prefs.GlassEnabled=value; Program.ApplyPreferences(); return value;});
         var defaults=new Preferences();

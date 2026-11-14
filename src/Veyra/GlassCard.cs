@@ -77,7 +77,7 @@ internal sealed class GlassCard : Grid, IDisposable
     {
         if (!CanRender())
         {
-            ReleaseMaterial(_disposed || !Program.Prefs.GlassEnabled);
+            ReleaseMaterial(_disposed);
             return;
         }
 
@@ -102,7 +102,7 @@ internal sealed class GlassCard : Grid, IDisposable
             };
 
             _renderer ??= new GlassRenderer();
-            if (_renderer.TryRender(region, options, out BitmapSource? frame) && frame is not null)
+            if (_renderer.TryRender(region, GlassMaterialProfile.Apply(options), out BitmapSource? frame) && frame is not null)
             {
                 if (_renderer.LastFrameUpdated || _image.Source != frame) Present(frame);
             }
@@ -122,7 +122,7 @@ internal sealed class GlassCard : Grid, IDisposable
     {
         if (!CanRender())
         {
-            ReleaseMaterial(_disposed || !Program.Prefs.GlassEnabled);
+            ReleaseMaterial(_disposed);
             return;
         }
 
@@ -135,7 +135,7 @@ internal sealed class GlassCard : Grid, IDisposable
 
     private bool CanRender()
     {
-        if (_disposed || !Program.Prefs.GlassEnabled || Program.Prefs.GlassTransparency>=1 || !IsLoaded || !IsVisible ||
+        if (_disposed || Program.Prefs.GlassTransparency>=1 || !IsLoaded || !IsVisible ||
             ActualWidth < 4 || ActualHeight < 4 || PresentationSource.FromVisual(this) is null)
             return false;
 

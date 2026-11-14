@@ -15,6 +15,8 @@ public sealed class Preferences
     public double IconSize { get; set; } = 46;
     public double DockScale { get; set; } = .65;
     public bool HideInFullscreen { get; set; } = true;
+    public bool ShowIsland { get; set; } = true;
+    public MaterialType MaterialType { get; set; } = MaterialType.Acrylic;
     public static string DataDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GlassDock");
     private static string FilePath => Path.Combine(DataDirectory, "preferences.json");
     public static Preferences Load()

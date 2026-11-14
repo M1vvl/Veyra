@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -14,7 +15,7 @@
     <Title>Veyra</Title>
     <Description>Veyra Liquid Glass desktop</Description>
     <Company>Veyra</Company>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <StartupObject>GlassDock.Program</StartupObject>
   </PropertyGroup>
   <ItemGroup>
@@ -22,9 +23,10 @@
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="System.Text.Json" Version="9.0.23" />
     <EmbeddedResource Include="Rendering/LiquidGlass.hlsl" />
     <EmbeddedResource Include="Assets/Veyra.ico" />
     <EmbeddedResource Include="Rendering/Shaders/*.cso;Rendering/Shaders/*.sha256" WithCulture="false" />
-    <None Update="ThirdParty/WitchDrawer/LICENSE.txt;ThirdParty/WitchDrawer/NOTICE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="ThirdParty/WitchDrawer/LICENSE.txt;ThirdParty/WitchDrawer/NOTICE.md;ThirdParty/NetEaseClock/LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
