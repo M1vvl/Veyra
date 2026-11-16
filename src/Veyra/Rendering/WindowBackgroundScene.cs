@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -22,7 +22,9 @@ internal sealed class WindowBackgroundScene : IDisposable
     private readonly Dictionary<object,Int32Rect> _regions=[];
     private readonly Dictionary<nint,WindowCaptureSource> _sources=[];
     private readonly Dictionary<nint,long> _retry=[];
-    private readonly List<(nint Window,Int32Rect Bounds,NativeWindowComposition Composition)> _order=[];
+    private readonly List<(nint Window,Int32Rect Bounds,NativeWindowComposition Composition,bool Required)> _order=[];
+    private readonly Dictionary<nint,long> _resumeChecks=[];
+    private long _resumeCheckAt;
     private readonly ID3D11VertexShader _vs;
     private readonly ID3D11PixelShader _ps;
     private readonly ID3D11SamplerState _sampler;
@@ -30,6 +32,8 @@ internal sealed class WindowBackgroundScene : IDisposable
     private readonly ID3D11BlendState _blend;
     private readonly ID3D11RenderTargetView _target;
     private long _lastEnumeration;
+    private readonly CapturePresentationState _presentation=new();
+    private long _presentationRefreshes;
     private bool _dirty=true;
     private readonly Dictionary<nint,long> _started=[];
     internal ID3D11Texture2D Texture { get; }
@@ -40,7 +44,7 @@ internal sealed class WindowBackgroundScene : IDisposable
     {
         nint foreground=DesktopNative.GetForegroundWindow(); GetWindowThreadProcessId(foreground,out uint process); GetBounds(foreground,out var bounds);
         DwmGetWindowAttribute(foreground,14,out int cloaked,4);
-        return new {regions=_regions.Values.ToArray(),foreground=new {window=foreground.ToInt64(),process,visible=IsWindowVisible(foreground),iconic=IsIconic(foreground),cloaked,bounds},windows=_order.Select(item=>new {window=item.Window.ToInt64(),name=WindowClass(item.Window),x=item.Bounds.X,y=item.Bounds.Y,width=item.Bounds.Width,height=item.Bounds.Height,item.Composition,frame=_sources.GetValueOrDefault(item.Window)?.Inspect()}).ToArray()};
+        return new {regions=_regions.Values.ToArray(),presentationRefreshes=_presentationRefreshes,foreground=new {window=foreground.ToInt64(),process,visible=IsWindowVisible(foreground),iconic=IsIconic(foreground),cloaked,bounds},windows=_order.Select(item=>new {window=item.Window.ToInt64(),name=WindowClass(item.Window),x=item.Bounds.X,y=item.Bounds.Y,width=item.Bounds.Width,height=item.Bounds.Height,item.Composition,item.Required,frame=_sources.GetValueOrDefault(item.Window)?.Inspect()}).ToArray()};
     }
     private const string Shader="""
         Texture2D<float4> windowPixels : register(t0);
@@ -92,7 +96,8 @@ internal sealed class WindowBackgroundScene : IDisposable
     internal bool Update()
     {
         long now=Environment.TickCount64;
-        if(now-_lastEnumeration>=80) { Enumerate(now); _lastEnumeration=now; }
+        RefreshPresentationSources(now);
+        if(_lastEnumeration==0 || now-_lastEnumeration>=80) { Enumerate(now); _lastEnumeration=now; }
         bool changed=_dirty;
         foreach(var pair in _order)
         {
@@ -100,6 +105,16 @@ internal sealed class WindowBackgroundScene : IDisposable
             try { changed|=source.Update(_device); }
             catch(Exception exception) when(exception is COMException or SharpGen.Runtime.SharpGenException or InvalidOperationException or UnauthorizedAccessException or InvalidCastException)
             { LastError=exception.Message; _retry[pair.Window]=now+3000; source.Dispose(); _sources.Remove(pair.Window); changed=true; }
+            if(_resumeChecks.TryGetValue(pair.Window,out long deadline) && now>=deadline)
+            {
+                _resumeChecks.Remove(pair.Window);
+                if(source.LastFrameAt<deadline-200 && _sources.ContainsKey(pair.Window))
+                {
+                    // One bounded retry handles a presenter that stalled during its swap-chain transition.
+                    source.Dispose(); _sources.Remove(pair.Window); _started.Remove(pair.Window);
+                    _retry.Remove(pair.Window); _lastEnumeration=0; _dirty=true; changed=true;
+                }
+            }
             if(source.View is null && _sources.ContainsKey(pair.Window) && now-_started.GetValueOrDefault(pair.Window,now)>1800)
             {
                 LastError="Background source did not deliver its first frame: "+WindowClass(pair.Window);
@@ -109,7 +124,11 @@ internal sealed class WindowBackgroundScene : IDisposable
         if(!changed)return false;
         // A newly opened capture session is not a background frame. Never publish
         // the cleared RT while the desktop / replacement HWND is still warming up.
-        var ready=_order.Where(pair=>_sources.TryGetValue(pair.Window,out var source) && source.View is not null).ToArray();
+        // Coverage from the wallpaper cannot stand in for an unready foreground app.
+        // Preserve the last complete material until every actually visible layer is ready.
+        if(_order.Any(pair=>pair.Required && (!_sources.TryGetValue(pair.Window,out var required)
+            || required.Closed || required.View is null)))return false;
+        var ready=_order.Where(pair=>_sources.TryGetValue(pair.Window,out var source) && !source.Closed && source.View is not null).ToArray();
         var opaqueReady=ready.Where(pair=>WindowClass(pair.Window) is "WorkerW" or "Progman" || pair.Composition.CanOcclude);
         if(!CoversRegions(_regions.Values,opaqueReady.Select(pair=>pair.Bounds),_monitor))return false;
         _context.PSUnsetShaderResource(0); _context.OMSetRenderTargets(_target);
@@ -148,11 +167,18 @@ internal sealed class WindowBackgroundScene : IDisposable
     internal void ResetSources()
     {
         foreach(var source in _sources.Values)source.Dispose();
-        _sources.Clear(); _started.Clear(); _retry.Clear(); _order.Clear(); _lastEnumeration=0; _dirty=true;
+        _sources.Clear(); _started.Clear(); _retry.Clear(); _resumeChecks.Clear(); _resumeCheckAt=0; _order.Clear(); _lastEnumeration=0; _dirty=true;
     }
     private void Enumerate(long now)
     {
-        var next=new List<(nint Window,Int32Rect Bounds,NativeWindowComposition Composition)>(); var opaque=new List<Int32Rect>();
+        var next=new List<(nint Window,Int32Rect Bounds,NativeWindowComposition Composition,bool Required)>();
+        var opaque=new List<Int32Rect>();
+        // Keep at most one adjacent application warm, including the just-minimized
+        // foreground window so restoring it does not require a new WGC session.
+        nint parked=_presentation.PreviousWindow;
+        bool keepParked=parked!=0 && IsIconic(parked) && IsWindowVisible(parked)
+            && _sources.TryGetValue(parked,out var parkedSource) && !parkedSource.Closed;
+        int warmSources=keepParked?1:0;
         var windows=new List<nint>();
         for(nint window=GetTopWindow(0);window!=0 && windows.Count<4096;window=GetWindow(window,2))windows.Add(window);
         foreach(nint window in windows)Consider(window);
@@ -165,18 +191,27 @@ internal sealed class WindowBackgroundScene : IDisposable
             if(!GetBounds(window,out var bounds))return true;
             bool desktop=WindowClass(window) is "WorkerW" or "Progman";
             var visible=_regions.Values.Select(region=>Intersect(region,bounds)).Where(rect=>!rect.IsEmpty).ToList();
-            // Keep the real desktop as the base. An empty or transparent capture
-            // above it must not cull the only pixels available underneath.
-            if(!desktop)foreach(var cover in opaque) { visible=visible.SelectMany(rect=>Subtract(rect,cover)).ToList(); if(visible.Count==0)break; }
             if(visible.Count==0)return true;
-            next.Add((window,bounds,composition));
-            if(!desktop && composition.CanOcclude && _sources.TryGetValue(window,out var ready) && ready.View is not null)opaque.Add(bounds);
+            foreach(var cover in opaque)
+            {
+                visible=visible.SelectMany(rect=>Subtract(rect,cover)).ToList();
+                if(visible.Count==0)break;
+            }
+            bool required=visible.Count>0;
+            // Keep just the next opaque layer warm, so minimizing the top fullscreen
+            // window can immediately reveal the correct app instead of a cold desktop fallback.
+            bool warm=!desktop && !required && composition.CanOcclude && warmSources==0;
+            if(!desktop && !required && !warm)return true;
+            if(warm)warmSources++;
+            next.Add((window,bounds,composition,required));
+            if(!desktop && composition.CanOcclude)opaque.Add(bounds);
             return true;
         }
         if(!_order.SequenceEqual(next))_dirty=true;
         _order.Clear(); _order.AddRange(next);
         var selected=next.Select(item=>item.Window).ToHashSet();
-        foreach(var pair in _sources.ToArray())if(!selected.Contains(pair.Key) || pair.Value.Closed) { pair.Value.Dispose(); _sources.Remove(pair.Key); _started.Remove(pair.Key); _dirty=true; }
+        if(keepParked)selected.Add(parked);
+        foreach(var pair in _sources.ToArray())if(!selected.Contains(pair.Key) || pair.Value.Closed) { pair.Value.Dispose(); _sources.Remove(pair.Key); _started.Remove(pair.Key); _resumeChecks.Remove(pair.Key); _dirty=true; }
         foreach(var item in next)
         {
             if(_sources.ContainsKey(item.Window) || _retry.TryGetValue(item.Window,out long retry) && now<retry)continue;
@@ -185,7 +220,40 @@ internal sealed class WindowBackgroundScene : IDisposable
             { LastError=exception.Message; _retry[item.Window]=now+5000; }
         }
         foreach(var old in _retry.Keys.Where(window=>!selected.Contains(window)).ToArray())_retry.Remove(old);
+        if(_resumeCheckAt!=0)
+        {
+            foreach(var item in next)
+                if(item.Required && _sources.ContainsKey(item.Window))_resumeChecks[item.Window]=_resumeCheckAt;
+            _resumeCheckAt=0;
+        }
     }
+    private void RefreshPresentationSources(long now)
+    {
+        nint foreground=DesktopNative.ForegroundForDesktopPolicy();
+        if(foreground==0 || !IsWindowVisible(foreground) || IsIconic(foreground))return;
+        GetWindowThreadProcessId(foreground,out uint process);
+        if(process==(uint)Environment.ProcessId || !GetBounds(foreground,out var bounds))return;
+        if(Intersect(bounds,_monitor).IsEmpty)return;
+        string type=WindowClass(foreground);
+        if(type is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "#32768")return;
+        bool desktop=type is "Progman" or "WorkerW";
+        int centerX=bounds.X+bounds.Width/2,centerY=bounds.Y+bounds.Height/2;
+        bool sameMonitor=centerX>=_monitor.X && centerX<_monitor.X+_monitor.Width
+            && centerY>=_monitor.Y && centerY<_monitor.Y+_monitor.Height;
+        bool covers=bounds.X<=_monitor.X+1 && bounds.Y<=_monitor.Y+1
+            && bounds.X+bounds.Width>=_monitor.X+_monitor.Width-1
+            && bounds.Y+bounds.Height>=_monitor.Y+_monitor.Height-1;
+        bool covered=!desktop && (covers || sameMonitor && IsZoomed(foreground));
+        if(!_presentation.Observe(foreground,covered,bounds.X,bounds.Y,bounds.Width,bounds.Height))return;
+        // Reuse warm sessions on the fast path. Schedule one recovery check for
+        // interrupted presenters, preserving the shared device and optical buffers.
+        _resumeChecks.Clear();
+        _resumeCheckAt=now+500;
+        _lastEnumeration=0;
+        _dirty=true;
+        _presentationRefreshes++;
+    }
+
     private static string WindowClass(nint window) { var name=new StringBuilder(100); GetClassName(window,name,name.Capacity); return name.ToString(); }
     private static bool GetBounds(nint window,out Int32Rect bounds)
     {
@@ -214,6 +282,7 @@ internal sealed class WindowBackgroundScene : IDisposable
     [DllImport("user32.dll")] private static extern nint GetWindow(nint window,uint command);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint window);
     [DllImport("user32.dll")] private static extern bool IsIconic(nint window);
+    [DllImport("user32.dll")] private static extern bool IsZoomed(nint window);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint window,out uint process);
     [DllImport("user32.dll")] private static extern int GetWindowLong(nint window,int index);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(nint window,out DesktopNative.Rect bounds);

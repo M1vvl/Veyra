@@ -31,7 +31,7 @@ public class NeteaseLyricsProvider : ILyricsProvider, IDisposable
         _httpClient.DefaultRequestHeaders.Add("Referer", "https://music.163.com");
     }
 
-    public async Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo)
+    public async Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo,CancellationToken cancellationToken=default)
     {
         if (string.IsNullOrEmpty(mediaInfo.Title))
             return null;
@@ -41,14 +41,14 @@ public class NeteaseLyricsProvider : ILyricsProvider, IDisposable
             // 搜索歌曲
             if(mediaInfo.SourceTrackId>0)
             {
-                var direct=await GetLyricsByIdAsync(mediaInfo.SourceTrackId);
+                var direct=await GetLyricsByIdAsync(mediaInfo.SourceTrackId,cancellationToken);
                 if(direct is not null)
                 {
                     var parsed=!string.IsNullOrEmpty(direct.YRC)?LyricsParser.ParseYRC(direct.YRC):LyricsParser.ParseLRC(direct.LRC);
                     if(parsed.Count>0)return parsed;
                 }
             }
-            var searchResults = await SearchAsync(mediaInfo.Title, mediaInfo.Artist);
+            var searchResults = await SearchAsync(mediaInfo.Title, mediaInfo.Artist,cancellationToken);
             if (searchResults == null || searchResults.Count == 0)
                 return null;
 
@@ -58,7 +58,7 @@ public class NeteaseLyricsProvider : ILyricsProvider, IDisposable
                 return null;
 
             // 获取歌词
-            var lyricsData = await GetLyricsByIdAsync(bestMatch.Id);
+            var lyricsData = await GetLyricsByIdAsync(bestMatch.Id,cancellationToken);
             if (lyricsData == null)
                 return null;
 
@@ -75,18 +75,18 @@ public class NeteaseLyricsProvider : ILyricsProvider, IDisposable
         }
     }
 
-    private async Task<List<NeteaseSong>?> SearchAsync(string title, string artist)
+    private async Task<List<NeteaseSong>?> SearchAsync(string title, string artist,CancellationToken cancellationToken)
     {
         try
         {
             var query = $"{title} {artist}";
             var url = $"{API_BASE}/search/get?s={Uri.EscapeDataString(query)}&type=1&limit=10";
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url,cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
                 return null;
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonSerializer.Deserialize<NeteaseSearchResponse>(json);
 
             return result?.Result?.Songs ?? new List<NeteaseSong>();
@@ -97,17 +97,17 @@ public class NeteaseLyricsProvider : ILyricsProvider, IDisposable
         }
     }
 
-    private async Task<LyricsData?> GetLyricsByIdAsync(long songId)
+    private async Task<LyricsData?> GetLyricsByIdAsync(long songId,CancellationToken cancellationToken)
     {
         try
         {
             var url = $"{API_BASE}/song/lyric?id={songId}&lv=1&tv=-1";
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url,cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
                 return null;
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonSerializer.Deserialize<NeteaseLyricsResponse>(json);
 
             if (result?.Lrc?.Lyric == null)

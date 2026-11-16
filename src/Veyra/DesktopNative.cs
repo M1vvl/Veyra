@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 
@@ -24,8 +24,6 @@ internal static class DesktopNative
     [DllImport("user32.dll")] private static extern bool ShowWindow(nint hwnd, int command);
     [DllImport("user32.dll")] private static extern bool IsZoomed(nint hwnd);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(nint hwnd, System.Text.StringBuilder name, int max);
-    [DllImport("user32.dll")] internal static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
-    [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(nint hwnd, int id);
     [DllImport("user32.dll")] private static extern nint GetAncestor(nint hwnd, uint flags);
     [DllImport("user32.dll")] private static extern nint GetWindow(nint hwnd, uint command);
     [DllImport("user32.dll")] private static extern nint GetShellWindow();
@@ -82,6 +80,25 @@ internal static class DesktopNative
         nint handle=new WindowInteropHelper(window).Handle,foreground=ForegroundForDesktopPolicy();
         if(foreground!=0 && !IsCurrentProcessWindow(foreground) && IsAbove(foreground,handle))SetWindowPos(handle,-1,0,0,0,0,0x0013);
         EnsureNativeShown(window);
+    }
+    internal static void PlaceAlwaysOnTop(Window window)
+    {
+        if(!window.Topmost)window.Topmost=true;
+        nint handle=new WindowInteropHelper(window).Handle;
+        if(handle!=0 && GetWindowRect(handle,out var rail))
+        {
+            bool covered=(GetWindowLong(handle,-20)&8)==0;
+            for(nint above=GetWindow(handle,3),count=0;!covered && above!=0 && count<4096;above=GetWindow(above,3),count++)
+            {
+                if(IsCurrentProcessWindow(above) || !IsWindowVisible(above) || IsIconic(above))continue;
+                if(DwmGetWindowAttribute(above,14,out int cloaked,4)==0 && cloaked!=0)continue;
+                if(!Rendering.NativeWindowComposition.Read(above).Visible)continue;
+                covered=GetWindowRect(above,out var bounds) && bounds.Left<rail.Right && bounds.Right>rail.Left
+                    && bounds.Top<rail.Bottom && bounds.Bottom>rail.Top;
+            }
+            if(covered)SetWindowPos(handle,-1,0,0,0,0,0x0013);
+        }
+        EnsureNativeShown(window,true);
     }
     private static bool IsAbove(nint candidate,nint surface)
     {

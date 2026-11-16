@@ -14,6 +14,7 @@ public class ImprovedLyricsService : IDisposable
 {
     private readonly List<ILyricsProvider> _providers;
     private readonly Dictionary<string, CachedLyrics> _cache = new();
+    private readonly object _cacheGate=new();
     private bool _disposed;
     private readonly CancellationTokenSource _lifetime=new();
 
@@ -30,10 +31,15 @@ public class ImprovedLyricsService : IDisposable
         _providers = _providers.OrderByDescending(p => p.Priority).ToList();
     }
 
+    internal ImprovedLyricsService(IEnumerable<ILyricsProvider> providers)
+    {
+        _providers=providers.OrderByDescending(provider=>provider.Priority).ToList();
+    }
+
     /// <summary>
     /// 获取歌词（带缓存和多源回退）
     /// </summary>
-    public async Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo)
+    public async Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo,CancellationToken cancellationToken=default)
     {
         if (_disposed || mediaInfo == null || string.IsNullOrEmpty(mediaInfo.Title))
             return null;
@@ -41,26 +47,31 @@ public class ImprovedLyricsService : IDisposable
         var cacheKey = mediaInfo.GetTrackKey();
 
         // 检查缓存
-        if (_cache.TryGetValue(cacheKey, out var cached))
+        using var request=CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token,cancellationToken);
+        var token=request.Token;
+        lock(_cacheGate)
         {
-            // 成功的缓存 2 小时，失败的缓存 10 分钟
-            var maxAge = cached.Lines != null ? TimeSpan.FromHours(2) : TimeSpan.FromMinutes(10);
-            if (DateTime.Now - cached.FetchedAt < maxAge)
-                return cached.Lines;
+            if (_cache.TryGetValue(cacheKey, out var cached))
+            {
+                var maxAge=cached.Lines is not null?TimeSpan.FromHours(2):TimeSpan.FromSeconds(5);
+                if(DateTime.Now-cached.FetchedAt<maxAge)return cached.Lines;
+            }
         }
 
         try
         {
             // 尝试所有提供者
-            foreach (var provider in _providers)
+            bool qqMusic=mediaInfo.SourceAppId.Contains("qqmusic",StringComparison.OrdinalIgnoreCase);
+            foreach (var provider in _providers.OrderByDescending(provider=>
+                provider.Priority+(qqMusic && provider is QQMusicLyricsProvider?2:0)))
             {
-                if(_disposed)return null;
+                token.ThrowIfCancellationRequested();
                 try
                 {
                     Program.Log($"尝试从 {provider.Name} 获取歌词: {mediaInfo.Title} - {mediaInfo.Artist}");
 
-                    var lines = await provider.GetLyricsAsync(mediaInfo).WaitAsync(_lifetime.Token);
-                    if(_disposed)return null;
+                    var lines = await provider.GetLyricsAsync(mediaInfo,token).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
 
                     if (lines != null && lines.Count > 0)
                     {
@@ -72,12 +83,12 @@ public class ImprovedLyricsService : IDisposable
                         if (validLines.Count > 0)
                         {
                             Program.Log($"✓ 从 {provider.Name} 成功获取 {validLines.Count} 行歌词");
-                            CacheResult(cacheKey, validLines);
+                            lock(_cacheGate)CacheResult(cacheKey, validLines);
                             return validLines;
                         }
                     }
                 }
-                catch(OperationCanceledException) when(_disposed) {return null;}
+                catch(OperationCanceledException) when(token.IsCancellationRequested) {return null;}
                 catch (Exception ex)
                 {
                     Program.Log($"✗ {provider.Name} 获取失败: {ex.Message}");
@@ -85,11 +96,12 @@ public class ImprovedLyricsService : IDisposable
             }
 
             // 所有提供者都失败
-            if(_disposed)return null;
+            if(_disposed || token.IsCancellationRequested)return null;
             Program.Log($"所有提供者都无法获取歌词: {mediaInfo.Title}");
-            CacheEmpty(cacheKey);
+            lock(_cacheGate)CacheEmpty(cacheKey);
             return null;
         }
+        catch(OperationCanceledException) when(token.IsCancellationRequested) {return null;}
         catch (Exception ex)
         {
             Program.Log($"获取歌词时出错: {ex.Message}");
@@ -140,7 +152,7 @@ public class ImprovedLyricsService : IDisposable
             provider.Dispose();
         }
 
-        _cache.Clear();
+        lock(_cacheGate)_cache.Clear();
     }
 
     private class CachedLyrics

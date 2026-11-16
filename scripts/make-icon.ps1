@@ -3,10 +3,8 @@ $ErrorActionPreference='Stop'
 Add-Type -AssemblyName PresentationCore,WindowsBase
 $inputStream=[IO.File]::OpenRead($Source)
 try {$image=[Windows.Media.Imaging.BitmapFrame]::Create($inputStream,[Windows.Media.Imaging.BitmapCreateOptions]::PreservePixelFormat,[Windows.Media.Imaging.BitmapCacheOption]::OnLoad)} finally {$inputStream.Dispose()}
-# Remove only the empty outer margin; preserve the supplied glass artwork.
-$factor=$image.PixelWidth/1254.0
-$crop=[Windows.Int32Rect]::new([int](150*$factor),[int](130*$factor),[int](950*$factor),[int](950*$factor))
-$art=[Windows.Media.Imaging.CroppedBitmap]::new($image,$crop)
+if($image.PixelWidth -ne $image.PixelHeight) {throw 'The icon source must be square.'}
+$art=$image
 $sizes=@(16,20,24,32,40,48,64,128,256)
 $frames=[Collections.Generic.List[byte[]]]::new()
 foreach($size in $sizes) {

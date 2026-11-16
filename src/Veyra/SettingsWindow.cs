@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -39,13 +39,17 @@ internal sealed partial class SettingsWindow : GlassWindow
         var startup=StartupService.Read(); var general=Section("常规");
         AddSwitch(general,"开机启动",startup.Enabled,value=>StartupService.SetEnabled(value).Enabled,startup.Error);
         AddSwitch(general,"替代 Windows 任务栏",Program.Prefs.ReplaceTaskbar,value=> {Program.Prefs.ReplaceTaskbar=value; Program.ApplyPreferences(); return value;});
-        AddSwitch(general,"固定右侧状态栏",Program.Prefs.SidebarPinned,value=> {Program.Prefs.SidebarPinned=value; Program.ApplyPreferences(); return value;});
+        AddSidebarMode(general);
         AddSwitch(general,"显示灵动岛屿",Program.Prefs.ShowIsland,value=> {Program.Prefs.ShowIsland=value; Program.ApplyPreferences(); return value;});
         var material=Section("材质");
         AddSwitch(material,"Liquid Glass",Program.Prefs.GlassEnabled,value=> {Program.Prefs.GlassEnabled=value; Program.ApplyPreferences(); return value;});
         var defaults=new Preferences();
         AddSlider(material,"玻璃层透明度",0,1,Program.Prefs.GlassTransparency,defaults.GlassTransparency,value=>Program.Prefs.GlassTransparency=value,value=>$"{value:P0}");
         AddFrameRate(material,defaults.GlassFramesPerSecond);
+        var islandColors=Section("灵动岛配色");
+        AddIslandColor(islandColors,"歌词颜色",()=>Program.Prefs.IslandLyricsColor,value=>Program.Prefs.IslandLyricsColor=value);
+        AddIslandColor(islandColors,"进度条颜色",()=>Program.Prefs.IslandProgressColor,value=>Program.Prefs.IslandProgressColor=value);
+        AddIslandColor(islandColors,"律动条颜色",()=>Program.Prefs.IslandMeterColor,value=>Program.Prefs.IslandMeterColor=value);
         var appearance=Section("外观与动效");
         AddSlider(appearance,"Dock 整体尺寸",.35,1,Program.Prefs.DockScale,defaults.DockScale,value=>Program.Prefs.DockScale=value,value=>$"{value:P0}");
         AddSlider(appearance,"图标大小",32,64,Program.Prefs.IconSize,defaults.IconSize,value=>Program.Prefs.IconSize=Math.Round(value),value=>$"{value:0}");

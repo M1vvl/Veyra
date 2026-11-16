@@ -36,7 +36,15 @@ internal sealed class IslandSeekBar : FrameworkElement
         Progress=Math.Clamp(e.GetPosition(this).X/Math.Max(1,ActualWidth),0,1); InvalidateVisual();
     }
     private static readonly Brush Track=FrozenBrush(Color.FromArgb(72,146,165,181));
-    private static readonly Brush Fill=FrozenBrush(Color.FromRgb(209,250,107));
+    private Brush _fill=IslandPalette.Accent(IslandAccentColor.Default);
+    internal Brush Accent=>_fill;
+    internal void SetAccent(IslandAccentColor color)
+    {
+        var brush=IslandPalette.Accent(color);
+        if(ReferenceEquals(_fill,brush))return;
+        _fill=brush;
+        InvalidateVisual();
+    }
     private static Brush FrozenBrush(Color color)
     {
         var brush=new SolidColorBrush(color);brush.Freeze();return brush;
@@ -46,6 +54,6 @@ internal sealed class IslandSeekBar : FrameworkElement
         drawing.DrawRectangle(Brushes.Transparent,null,new Rect(RenderSize));
         double y=(ActualHeight-2)/2;
         drawing.DrawRoundedRectangle(Track,null,new Rect(0,y,ActualWidth,2),1,1);
-        drawing.DrawRoundedRectangle(Fill,null,new Rect(0,y,ActualWidth*Math.Clamp(Progress,0,1),2),1,1);
+        drawing.DrawRoundedRectangle(_fill,null,new Rect(0,y,ActualWidth*Math.Clamp(Progress,0,1),2),1,1);
     }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -23,6 +23,11 @@ internal class IslandWindow : GlassWindow
     protected override void Reposition() { }
     // Reuse one bounded buffer across both sizes, including rapid reversals.
     protected override Size MaterialAllocationSize=>new Size(532,272);
+    private readonly DesktopNative.WinEventCallback _foregroundChanged;
+    private nint _foregroundHook;
+    private int _foregroundUpdateQueued;
+    private bool _transitionRefreshAttached;
+    private long _transitionRefreshUntil;
     private readonly DispatcherTimer _meterTimer=new() {Interval=TimeSpan.FromMilliseconds(60)};
     private readonly Rectangle[] _meterBars=new Rectangle[3];
     private readonly double[] _meterLevels=new double[3];
@@ -30,6 +35,9 @@ internal class IslandWindow : GlassWindow
     private readonly IslandSeekBar _compactSeek=new(),_expandedSeek=new();
     private int _trackGeneration;
     private string? _lyricsTrack;
+    private CancellationTokenSource? _lyricsRequest;
+    private bool _lyricsRequestActive;
+    private long _lyricsRetryAfter;
     private LyricLine? _highlightedLine;
     private readonly MediaSessionService _mediaSession;
     private readonly ImprovedLyricsService _lyricsService;
@@ -41,7 +49,10 @@ internal class IslandWindow : GlassWindow
     private bool _isExpanded;
     private bool _isDragging;
     private Point _dragStartPoint;
-    private DateTime _positionUpdateTime;
+    private readonly IslandPlaybackClock _lyricClock=new();
+    private bool _seekTimelinePending;
+    private static double MonotonicSeconds=>System.Diagnostics.Stopwatch.GetTimestamp()
+        /(double)System.Diagnostics.Stopwatch.Frequency;
 
     // UI 元素 - 紧凑模式
     private readonly Grid _rootGrid;
@@ -49,11 +60,8 @@ internal class IslandWindow : GlassWindow
     private readonly Grid _compactHeader;
     private readonly Border _albumCoverBorder;
     private readonly Image _albumCover;
-    private readonly TextBlock _lyricText;
+    private readonly IslandCompactLyrics _lyricText;
     private readonly Border _lyricViewport;
-    private readonly TranslateTransform _lyricScroll=new();
-    private AnimationClock? _lyricScrollClock;
-    private double _lyricScrollSeconds=6;
     private readonly StackPanel _controlButtons;
     private readonly Button _prevButton;
     private readonly Button _playPauseButton;
@@ -65,7 +73,7 @@ internal class IslandWindow : GlassWindow
     private readonly Image _expandedCoverImage;
     private readonly TextBlock _songTitle;
     private readonly TextBlock _artistName;
-    private readonly ScrollViewer _lyricsScroll;
+    private readonly IslandLyricsView _lyricsScroll;
     private readonly StackPanel _lyricsPanel;
     private readonly Slider _progressSlider;
     private readonly TextBlock _currentTime;
@@ -75,8 +83,11 @@ internal class IslandWindow : GlassWindow
     private readonly ScaleTransform _coverScale=new(1,1);
     private readonly TranslateTransform _coverPlacement=new();
     private readonly RectangleGeometry _contentClip=new();
+    private static readonly DependencyProperty ExpansionProperty=DependencyProperty.Register(
+        "Expansion",typeof(double),typeof(IslandWindow),
+        new PropertyMetadata(0d,(owner,_)=>((IslandWindow)owner).ApplyExpansion()));
+    private double Expansion {get=>(double)GetValue(ExpansionProperty);set=>SetValue(ExpansionProperty,value);}
     private int _transitionRevision;
-    private bool _transitioning;
     private bool _seeking;
     private string? _seekError;
     private List<LyricLine>? _renderedLyrics;
@@ -88,15 +99,18 @@ internal class IslandWindow : GlassWindow
     private bool? _displayedPlayback;
     private int _displayedSecond=-1,_displayedDuration=-1;
 
-    public IslandWindow() : base("Veyra · 灵动岛屿")
+    public IslandWindow() : this(new ImprovedLyricsService()) { }
+
+    internal IslandWindow(ImprovedLyricsService lyricsService,MediaSessionService? mediaSession=null) : base("Veyra · 灵动岛屿")
     {
-        _mediaSession = new MediaSessionService();
-        _lyricsService = new ImprovedLyricsService();
-        _positionUpdateTime = DateTime.Now;
+        _foregroundChanged=(_,_,_,_,_,_,_)=>QueueForegroundRefresh();
+        _mediaSession = mediaSession??new MediaSessionService();
+        _lyricsService = lyricsService;
 
         // 窗口设置
-        Width = 492;
-        Height = 56;
+        // Keep the layered HWND stable. Only its visible glass surface changes size.
+        Width = 532;
+        Height = 272;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         Topmost = true;
@@ -190,20 +204,9 @@ internal class IslandWindow : GlassWindow
         _compactHeader.Children.Add(_albumCoverBorder);
 
         // 中间：歌词文本
-        _lyricText = new TextBlock
-        {
-            Foreground = new SolidColorBrush(Color.FromRgb(209, 250, 107)),
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            TextTrimming = TextTrimming.None,
-            TextWrapping = TextWrapping.NoWrap,
-            RenderTransform=_lyricScroll,
-            Text = "等待播放..."
-        };
+        _lyricText = new IslandCompactLyrics();
+        _lyricText.ShowTitle("等待播放...");
         _lyricViewport=new Border {Margin=new Thickness(80,0,100,0),ClipToBounds=true,Child=_lyricText};
-        _lyricViewport.SizeChanged+=(_,_)=> {if(!_isExpanded && !_transitioning)StartLyricScroll();};
         _compactHeader.Children.Add(_lyricViewport);
 
         // 右侧：控制按钮
@@ -288,16 +291,8 @@ internal class IslandWindow : GlassWindow
         rightPanel.Children.Add(headerStack);
 
         // 歌词列表
-        _lyricsScroll = new ScrollViewer
-        {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-        };
-        _lyricsPanel = new StackPanel
-        {
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        _lyricsScroll.Content = _lyricsPanel;
+        _lyricsScroll = new IslandLyricsView();
+        _lyricsPanel = _lyricsScroll.Lines;
         Grid.SetRow(_lyricsScroll, 1);
         rightPanel.Children.Add(_lyricsScroll);
 
@@ -385,6 +380,23 @@ internal class IslandWindow : GlassWindow
 
         Loaded += OnLoaded;
         Closed += OnClosed;
+        ApplyIslandColors();
+    }
+
+    public override void ApplyPreferences()
+    {
+        base.ApplyPreferences();
+        ApplyIslandColors();
+    }
+
+    private void ApplyIslandColors()
+    {
+        _lyricText.SetAccent(Program.Prefs.IslandLyricsColor);
+        _lyricsScroll.SetAccent(Program.Prefs.IslandLyricsColor);
+        _compactSeek.SetAccent(Program.Prefs.IslandProgressColor);
+        _expandedSeek.SetAccent(Program.Prefs.IslandProgressColor);
+        var meter=IslandPalette.Meter(Program.Prefs.IslandMeterColor);
+        foreach(var bar in _meterBars)bar.Fill=meter;
     }
 
     private Border CreateIslandBorder()
@@ -451,10 +463,11 @@ internal class IslandWindow : GlassWindow
     {
         try
         {
-            await _mediaSession.InitializeAsync();
-            if(_closed)return;
+            _foregroundHook=DesktopNative.WatchForeground(_foregroundChanged);
             _mediaSession.MediaChanged += OnMediaChanged;
             _mediaSession.PlaybackStatusChanged += OnPlaybackStatusChanged;
+            await _mediaSession.InitializeAsync();
+            if(_closed)return;
 
             _updateTimer.Start();
             _lyricTimer.Start();
@@ -474,38 +487,75 @@ internal class IslandWindow : GlassWindow
 
     private void OnClosed(object? sender, EventArgs e)
     {
-        _closed=true; _transitioning=false; _transitionRevision++; _trackGeneration++;
-        BeginAnimation(WidthProperty,null);
-        BeginAnimation(HeightProperty,null);
-        BeginAnimation(LeftProperty,null);
+        _closed=true; _transitionRevision++; _trackGeneration++;
+        if(_foregroundHook!=0) {DesktopNative.UnhookWinEvent(_foregroundHook); _foregroundHook=0;}
+        StopTransitionRefresh();
+        BeginAnimation(ExpansionProperty,null);
         _mediaSession.MediaChanged-=OnMediaChanged;
         _mediaSession.PlaybackStatusChanged-=OnPlaybackStatusChanged;
         _meterTimer.Stop();
         _updateTimer.Stop();
         _lyricTimer.Stop();
-        _lyricScrollClock?.Controller?.Remove();
         _rotationClock.Controller?.Remove();
         _coverRotation.ApplyAnimationClock(RotateTransform.AngleProperty,null);
         _mediaSession.Dispose();
+        _lyricsRequest?.Cancel();
         _lyricsService.Dispose();
-        _lyricScroll.ApplyAnimationClock(TranslateTransform.XProperty,null);
-        _lyricScrollClock=null;
         _expandedContent.BeginAnimation(OpacityProperty,null);
         _lyricText.BeginAnimation(OpacityProperty,null);
         _compactSeek.BeginAnimation(MarginProperty,null);
         _albumCover.Source=null;
         _expandedCoverImage.Source=null;
+        _lyricsScroll.SelectLine(null);
         _currentMedia=null; _currentLyrics=null; _renderedLyrics=null;
         _lyricsPanel.Children.Clear();
+    }
+
+    private void QueueForegroundRefresh()
+    {
+        if(_closed || Dispatcher.HasShutdownStarted || Interlocked.Exchange(ref _foregroundUpdateQueued,1)!=0)return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input,new Action(()=> {
+            Interlocked.Exchange(ref _foregroundUpdateQueued,0);
+            if(_closed || !IsVisible)return;
+            Rendering.SharedDesktopCapture.InvalidatePresentation();
+            _transitionRefreshUntil=Environment.TickCount64+180;
+            if(!_transitionRefreshAttached)
+            {
+                _transitionRefreshAttached=true;
+                CompositionTarget.Rendering+=RefreshTransitionFrame;
+            }
+            RenderGlass();
+        }));
+    }
+
+    private void RefreshTransitionFrame(object? sender,EventArgs args)
+    {
+        if(_closed || !IsVisible || Environment.TickCount64>_transitionRefreshUntil)
+        {
+            StopTransitionRefresh();
+            return;
+        }
+        RenderGlass();
+    }
+
+    private void StopTransitionRefresh()
+    {
+        if(!_transitionRefreshAttached)return;
+        CompositionTarget.Rendering-=RefreshTransitionFrame;
+        _transitionRefreshAttached=false;
     }
 
     private async void OnMediaChanged(object? sender, MediaInfo e)
     {
         if(_closed || Dispatcher.HasShutdownStarted)return;
-        await Dispatcher.InvokeAsync(async () =>
+        try
         {
-            if(!_closed)await UpdateMediaInfo(e);
-        }).Task.Unwrap();
+            await Dispatcher.InvokeAsync(async () =>
+            {
+                if(!_closed)await UpdateMediaInfo(e);
+            }).Task.Unwrap();
+        }
+        catch(TaskCanceledException) when(_closed || Dispatcher.HasShutdownStarted) { }
     }
 
     private void OnPlaybackStatusChanged(object? sender, EventArgs e)
@@ -516,9 +566,20 @@ internal class IslandWindow : GlassWindow
 
     private async Task UpdateMediaInfo(MediaInfo media)
     {
-        if(_closed)return;
+        if(_closed || _currentMedia is not null && media.Revision<_currentMedia.Revision)return;
+        bool sameTrack=_currentMedia is not null && _currentMedia.Revision==media.Revision
+            && _currentMedia.SourceAppId==media.SourceAppId;
+        if(sameTrack)
+        {
+            media.Position=_currentMedia!.Position;
+            if(media.Duration<=TimeSpan.Zero)media.Duration=_currentMedia.Duration;
+        }
         _currentMedia = media;
-        _positionUpdateTime = DateTime.Now;
+        if(!sameTrack)
+        {
+            _albumCover.Source=null;
+            _expandedCoverImage.Source=null;
+        }
 
         // 更新封面
         if (media.Thumbnail != null && media.Thumbnail.Length > 0)
@@ -528,6 +589,7 @@ internal class IslandWindow : GlassWindow
                 using var ms = new System.IO.MemoryStream(media.Thumbnail);
                 var bitmap = new BitmapImage();
                 bitmap.BeginInit();
+                if(media.SourceAppId.Contains("qqmusic",StringComparison.OrdinalIgnoreCase))bitmap.DecodePixelWidth=300;
                 bitmap.StreamSource = ms;
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
                 bitmap.EndInit();
@@ -545,19 +607,62 @@ internal class IslandWindow : GlassWindow
         UpdateRotation(media.IsPlaying);
 
         string key=media.GetTrackKey();
-        if(_lyricsTrack==key)return;
+        if(sameTrack && _lyricsTrack==key)return;
+        if(sameTrack)
+        {
+            _lyricsTrack=key;
+            _lyricsRequest?.Cancel();
+            _currentLyrics=null;
+            _lyricText.ShowTitle(media.Title);
+            if(_isExpanded)UpdateExpandedView();
+            await LoadLyricsAsync(media,++_trackGeneration);
+            return;
+        }
         _lyricsTrack=key;
+        _lyricsRequest?.Cancel();
+        _lyricClock.Reset();
+        _seekTimelinePending=false;
+        _pendingSeekFraction=null;
+        _seekError=null;
         int generation=++_trackGeneration;
         _currentLyrics=null;
         _highlightedLine=null;
-        SetLyricText(media.Title);
-        var lyrics=await _lyricsService.GetLyricsAsync(media);
-        if(_closed || generation!=_trackGeneration)return;
-        _currentLyrics=lyrics?.OrderBy(line=>line.Time).ToList();
+        _lyricsRetryAfter=long.MaxValue;
+        _lyricsRealized=false;
+        _compactSeek.Progress=_expandedSeek.Progress=0;
+        _compactSeek.IsEnabled=_expandedSeek.IsEnabled=false;
+        _currentTime.Text="0:00";
+        _totalTime.Text=FormatTime(media.Duration);
+        _displayedSecond=_displayedDuration=-1;
+        _lyricText.ShowTitle(string.IsNullOrEmpty(media.Title)?"等待播放...":media.Title);
+        if(_isExpanded)UpdateExpandedView();
+        OnUpdateTick(null,EventArgs.Empty);
+        await LoadLyricsAsync(media,generation);
+    }
 
-        if (_isExpanded)
+    private async Task LoadLyricsAsync(MediaInfo media,int generation)
+    {
+        using var request=new CancellationTokenSource();
+        _lyricsRequest=request;
+        _lyricsRequestActive=true;
+        try
         {
-            UpdateExpandedView();
+            var lyrics=await _lyricsService.GetLyricsAsync(media,request.Token);
+            if(_closed || request.IsCancellationRequested || generation!=_trackGeneration)return;
+            _currentLyrics=lyrics?.OrderBy(line=>line.Time).ToList();
+            _lyricsRetryAfter=Environment.TickCount64+5000;
+            if(_isExpanded)UpdateExpandedView();
+            OnLyricTick(null,EventArgs.Empty);
+        }
+        catch(OperationCanceledException) { }
+        catch(Exception ex) {Program.Log("Island lyrics: "+ex.Message);}
+        finally
+        {
+            if(ReferenceEquals(_lyricsRequest,request))
+            {
+                _lyricsRequest=null;
+                _lyricsRequestActive=false;
+            }
         }
     }
 
@@ -581,8 +686,8 @@ internal class IslandWindow : GlassWindow
     {
         if(_closed || _rotationPlaying==isPlaying)return;
         _rotationPlaying=isPlaying;
-        if(isPlaying) {_rotationClock.Controller?.Resume(); _lyricScrollClock?.Controller?.Resume();}
-        else {_rotationClock.Controller?.Pause(); _lyricScrollClock?.Controller?.Pause();}
+        if(isPlaying)_rotationClock.Controller?.Resume();
+        else _rotationClock.Controller?.Pause();
     }
 
     private async void Seek(double fraction)
@@ -599,6 +704,7 @@ internal class IslandWindow : GlassWindow
                 var target=TimeSpan.FromSeconds(media.Duration.TotalSeconds*latest);
                 bool changed=await _mediaSession.SeekAsync(target);
                 if(_closed)return;
+                if(!ReferenceEquals(media,_currentMedia))return;
                 if(!changed)
                 {
                     _seekError="播放器未执行跳转";
@@ -606,8 +712,8 @@ internal class IslandWindow : GlassWindow
                     _pendingSeekFraction=null;
                     break;
                 }
+                _seekTimelinePending=true;
                 OnUpdateTick(null,EventArgs.Empty);
-                OnLyricTick(null,EventArgs.Empty);
             }
         }
         catch(Exception ex) {Program.Log("Island seek: "+ex.Message);}
@@ -617,39 +723,49 @@ internal class IslandWindow : GlassWindow
     private void OnUpdateTick(object? sender, EventArgs e)
     {
         if(_closed)return;
+        if(_currentMedia is { } current && !string.IsNullOrEmpty(current.Title) && _currentLyrics is null
+            && !_lyricsRequestActive && Environment.TickCount64>=_lyricsRetryAfter)
+            _=LoadLyricsAsync(current,_trackGeneration);
         var timeline=_mediaSession.ReadTimeline();
-        if(_currentMedia is null || timeline is null)return;
-        _currentMedia.Position=timeline.Value.Position;
-        _currentMedia.Duration=timeline.Value.Duration;
-        _currentMedia.IsPlaying=timeline.Value.Playing;
-        _positionUpdateTime=DateTime.Now;
+        if(_currentMedia is null || timeline is null || timeline.Revision!=_currentMedia.Revision)return;
+        double now=MonotonicSeconds;
+        double observedPosition=timeline.Position.TotalSeconds;
+        if(timeline.Playing)observedPosition+=Math.Max(0,Environment.TickCount64-timeline.ObservedAt)/1000d;
+        _lyricClock.Observe(observedPosition,timeline.Playing,now,_seekTimelinePending);
+        _seekTimelinePending=false;
+        _currentMedia.Position=TimeSpan.FromSeconds(_lyricClock.Read(now));
+        _currentMedia.Duration=timeline.Duration;
+        _currentMedia.IsPlaying=timeline.Playing;
         UpdatePlayPauseButton(_currentMedia.IsPlaying);
         UpdateRotation(_currentMedia.IsPlaying);
         double duration=_currentMedia.Duration.TotalSeconds;
-        foreach(var seek in new[]{_compactSeek,_expandedSeek})
-        {
-            seek.IsEnabled=timeline.Value.CanSeek && duration>0;
-            seek.ToolTip=_seekError??(duration>0?(timeline.Value.CanSeek?"播放进度":"播放器不支持跳转"):"播放器未提供实时进度");
-            if(!seek.Dragging && !_seeking)seek.Progress=duration>0?_currentMedia.Position.TotalSeconds/duration:0;
-            seek.InvalidateVisual();
-        }
+        UpdateSeekBar(_compactSeek,timeline,duration);
+        UpdateSeekBar(_expandedSeek,timeline,duration);
         int second=(int)_currentMedia.Position.TotalSeconds;
         int durationSecond=(int)_currentMedia.Duration.TotalSeconds;
         if(_displayedSecond!=second) {_displayedSecond=second; _currentTime.Text=FormatTime(_currentMedia.Position);}
         if(_displayedDuration!=durationSecond) {_displayedDuration=durationSecond; _totalTime.Text=FormatTime(_currentMedia.Duration);}
+        OnLyricTick(null,EventArgs.Empty);
+    }
+
+    private void UpdateSeekBar(IslandSeekBar seek,MediaSessionService.Timeline timeline,double duration)
+    {
+        seek.IsEnabled=timeline.CanSeek && duration>0;
+        seek.ToolTip=_seekError??(duration>0?(timeline.CanSeek?"播放进度":"播放器不支持跳转"):"播放器未提供实时进度");
+        if(!seek.Dragging && !_seeking)seek.Progress=duration>0?_currentMedia!.Position.TotalSeconds/duration:0;
+        seek.InvalidateVisual();
     }
 
     private void OnLyricTick(object? sender, EventArgs e)
     {
+        if(_closed)return;
+        double position=_lyricClock.Read(MonotonicSeconds);
         if (_currentMedia == null || _currentLyrics == null || _currentLyrics.Count == 0)
         {
-            SetLyricText(_currentMedia?.Title ?? "等待播放...");
+            _lyricText.ShowTitle(_currentMedia?.Title??"等待播放...");
             return;
         }
-
-        var elapsed = _currentMedia.IsPlaying?DateTime.Now - _positionUpdateTime:TimeSpan.Zero;
-        var currentPosition = _currentMedia.Position + elapsed;
-
+        var currentPosition=TimeSpan.FromSeconds(position);
         int low=0,high=_currentLyrics.Count-1,index=-1;
         while(low<=high)
         {
@@ -657,66 +773,27 @@ internal class IslandWindow : GlassWindow
             if(_currentLyrics[middle].Time<=currentPosition) {index=middle; low=middle+1;}
             else high=middle-1;
         }
-        if(index>=0)
+        if(index<0)
         {
-            var currentLine=_currentLyrics[index];
-            var nextLine=index+1<_currentLyrics.Count?_currentLyrics[index+1]:null;
-            SetLyricText(currentLine.Text,nextLine is null?6:Math.Max(1,(nextLine.Time-currentPosition).TotalSeconds));
-
-            if (_isExpanded && _highlightedLine!=currentLine)
-            {
-                _highlightedLine=currentLine;
-                HighlightCurrentLyric(currentLine);
-            }
+            _lyricText.ShowTitle(_currentMedia.Title);
+            if(_highlightedLine is not null) {_highlightedLine=null;_lyricsScroll.SelectLine(null);}
+            return;
         }
-    }
-
-    private void SetLyricText(string text,double remainingSeconds=6)
-    {
-        if(_lyricText.Text==text)return;
-        _lyricText.Text=text;
-        _lyricScrollSeconds=remainingSeconds;
-        StartLyricScroll();
-    }
-
-    private void StartLyricScroll()
-    {
-        _lyricScrollClock?.Controller?.Remove();
-        _lyricScrollClock=null;
-        _lyricScroll.BeginAnimation(TranslateTransform.XProperty,null);
-        _lyricText.Width=double.NaN;
-        _lyricText.Measure(new Size(double.PositiveInfinity,42));
-        double natural=_lyricText.DesiredSize.Width;
-        _lyricText.Width=natural;
-        double overflow=Math.Max(0,natural-_lyricViewport.ActualWidth);
-        _lyricScroll.X=overflow>0?0:Math.Max(0,(_lyricViewport.ActualWidth-natural)/2);
-        if(overflow<=0 || _isExpanded || _lyricViewport.ActualWidth<1)return;
-        var animation=new DoubleAnimation(0,-overflow,TimeSpan.FromSeconds(Math.Clamp(_lyricScrollSeconds-.6,.8,12))) {BeginTime=TimeSpan.FromMilliseconds(600),FillBehavior=FillBehavior.HoldEnd};
-        _lyricScrollClock=(AnimationClock)animation.CreateClock(true);
-        _lyricScroll.ApplyAnimationClock(TranslateTransform.XProperty,_lyricScrollClock);
-        if(_currentMedia?.IsPlaying!=true)_lyricScrollClock.Controller?.Pause();
+        var currentLine=_currentLyrics[index];
+        var nextLine=index+1<_currentLyrics.Count?_currentLyrics[index+1]:null;
+        double end=nextLine?.Time.TotalSeconds??Math.Max(currentLine.Time.TotalSeconds+6,_currentMedia.Duration.TotalSeconds);
+        _lyricText.ShowLine(currentLine,end,position);
+        if (_isExpanded && _highlightedLine!=currentLine)
+        {
+            _highlightedLine=currentLine;
+            HighlightCurrentLyric(currentLine);
+        }
     }
 
     private void HighlightCurrentLyric(LyricLine currentLine)
     {
-        foreach (var child in _lyricsPanel.Children.OfType<TextBlock>())
-        {
-            if (child.Tag as LyricLine == currentLine)
-            {
-                child.FontWeight = FontWeights.SemiBold;
-                child.Opacity = 1.0;
-                child.Foreground = new SolidColorBrush(Color.FromRgb(209, 250, 107));
-
-                // 滚动到当前行
-                child.BringIntoView();
-            }
-            else
-            {
-                child.FontWeight = FontWeights.Normal;
-                child.Opacity = 0.45;
-                child.Foreground = Brushes.White;
-            }
-        }
+        _lyricsScroll.SelectLine(_lyricsPanel.Children.OfType<TextBlock>()
+            .FirstOrDefault(child=>ReferenceEquals(child.Tag,currentLine)));
     }
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -778,56 +855,54 @@ internal class IslandWindow : GlassWindow
         if(_islandBorder.IsMouseCaptured)_islandBorder.ReleaseMouseCapture();
         _isExpanded=!_isExpanded;
         int revision=++_transitionRevision;
-        _transitioning=true;
-        double center=Left+ActualWidth/2;
-        var duration=TimeSpan.FromMilliseconds(320);
-        var easing=new CubicEase {EasingMode=EasingMode.EaseOut};
-        double width=_isExpanded?532:492;
-        double height=_isExpanded?272:56;
-        double left=center-width/2;
+        double target=_isExpanded?1:0;
+        double current=Expansion;
         _expandedContent.Visibility=Visibility.Visible;
         _expandedContent.IsHitTestVisible=_isExpanded;
         if(_isExpanded)UpdateExpandedView();
-        var heightAnimation=new DoubleAnimation(ActualHeight,height,duration) {EasingFunction=easing};
-        heightAnimation.Completed+=(_,_)=> {
-            if(_closed || revision!=_transitionRevision)return;
-            SetCurrentValue(WidthProperty,width);
-            SetCurrentValue(HeightProperty,height);
-            SetCurrentValue(LeftProperty,left);
-            BeginAnimation(WidthProperty,null);
-            BeginAnimation(HeightProperty,null);
-            BeginAnimation(LeftProperty,null);
-            _lyricText.SetCurrentValue(OpacityProperty,_isExpanded?0d:1d);
-            _lyricText.BeginAnimation(OpacityProperty,null);
-            _expandedContent.SetCurrentValue(OpacityProperty,_isExpanded?1d:0d);
-            _expandedContent.BeginAnimation(OpacityProperty,null);
-            _compactSeek.SetCurrentValue(MarginProperty,_isExpanded?new Thickness(146,0,20,16):new Thickness(16,0,16,0));
-            _compactSeek.BeginAnimation(MarginProperty,null);
-            _transitioning=false;
-            if(!_isExpanded) {_expandedContent.Visibility=Visibility.Collapsed; StartLyricScroll();}
+        // One clock drives geometry, artwork and content, including mid-flight reversals.
+        var animation=new DoubleAnimation(current,target,TimeSpan.FromMilliseconds(320))
+        {
+            EasingFunction=new CubicEase {EasingMode=EasingMode.EaseOut}
         };
-        BeginAnimation(WidthProperty,new DoubleAnimation(ActualWidth,width,duration) {EasingFunction=easing});
-        BeginAnimation(HeightProperty,heightAnimation);
-        BeginAnimation(LeftProperty,new DoubleAnimation(Left,left,duration) {EasingFunction=easing});
-        _lyricText.BeginAnimation(OpacityProperty,new DoubleAnimation(_isExpanded?0:1,duration) {EasingFunction=easing});
-        var detailsFade=new DoubleAnimation(_isExpanded?1:0,duration) {EasingFunction=easing};
-        _expandedContent.BeginAnimation(OpacityProperty,detailsFade);
-        _compactSeek.BeginAnimation(MarginProperty,new ThicknessAnimation(_isExpanded?new Thickness(146,0,20,16):new Thickness(16,0,16,0),duration) {EasingFunction=easing});
+        animation.Completed+=(_,_)=> {
+            if(_closed || revision!=_transitionRevision)return;
+            BeginAnimation(ExpansionProperty,null);
+            Expansion=target;
+            ApplyExpansion();
+            if(!_isExpanded) {_expandedContent.Visibility=Visibility.Collapsed; OnLyricTick(null,EventArgs.Empty);}
+        };
+        BeginAnimation(ExpansionProperty,animation,HandoffBehavior.SnapshotAndReplace);
     }
 
-    private void OnIslandSizeChanged(object sender,SizeChangedEventArgs e)
-    {
-        if(ActualWidth<=12 || ActualHeight<=12)return;
-        double progress=Math.Clamp((ActualHeight-56)/216,0,1);
-        double radius=22+4*progress;
-        SetSurface(new Rect(6,6,ActualWidth-12,ActualHeight-12),radius);
-        _contentClip.Rect=new Rect(2,2,ActualWidth-16,ActualHeight-16);
-        _contentClip.RadiusX=_contentClip.RadiusY=radius-2;
+    private void OnIslandSizeChanged(object sender,SizeChangedEventArgs e)=>ApplyExpansion();
 
-        // Follow the laid-out shell so render-thread transforms cannot overtake its resize.
+    private void ApplyExpansion()
+    {
+        if(_rootGrid is null || _expandedContent is null)return;
+        double progress=Math.Clamp(Expansion,0,1);
+        double width=480+40*progress;
+        double height=44+216*progress;
+        double radius=22+4*progress;
+        SetSurface(new Rect((532-width)/2,6,width,height),radius);
+        _contentClip.Rect=new Rect(2,2,width-4,height-4);
+        _contentClip.RadiusX=_contentClip.RadiusY=radius-2;
         _coverScale.ScaleX=_coverScale.ScaleY=1+2.8*progress;
         _coverPlacement.X=-11*progress;
         _coverPlacement.Y=47*progress;
+        _lyricText.Opacity=1-progress;
+        _expandedContent.Opacity=progress;
+        _compactSeek.Margin=new Thickness(16+130*progress,0,16+4*progress,16*progress);
+    }
+
+    protected override nint WndProc(nint hwnd,int msg,nint wParam,nint lParam,ref bool handled)
+    {
+        if(msg==0x0084)
+        {
+            var point=PointFromScreen(new Point((short)((long)lParam&0xffff),(short)(((long)lParam>>16)&0xffff)));
+            if(!Surface.Contains(point)) {handled=true;return -1;}
+        }
+        return base.WndProc(hwnd,msg,wParam,lParam,ref handled);
     }
 
     private void UpdateExpandedView()
@@ -841,6 +916,8 @@ internal class IslandWindow : GlassWindow
         if(_lyricsRealized && ReferenceEquals(_renderedLyrics,_currentLyrics))return;
         _lyricsRealized=true;
         _renderedLyrics=_currentLyrics;
+        _lyricsScroll.SelectLine(null);
+        _highlightedLine=null;
         _lyricsPanel.Children.Clear();
 
         if (_currentLyrics != null && _currentLyrics.Count > 0)

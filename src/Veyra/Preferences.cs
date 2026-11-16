@@ -1,12 +1,22 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
+using GlassDock.Island;
 
 namespace GlassDock;
+
+public enum SidebarDisplayMode { AutoHide,Fixed,AlwaysOnTop }
 
 public sealed class Preferences
 {
     public bool ReplaceTaskbar { get; set; } = true;
     public bool SidebarPinned { get; set; }
+    public bool SidebarAlwaysOnTop { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public SidebarDisplayMode SidebarMode
+    {
+        get=>SidebarAlwaysOnTop?SidebarDisplayMode.AlwaysOnTop:SidebarPinned?SidebarDisplayMode.Fixed:SidebarDisplayMode.AutoHide;
+        set {SidebarAlwaysOnTop=value==SidebarDisplayMode.AlwaysOnTop;SidebarPinned=value!=SidebarDisplayMode.AutoHide;}
+    }
     public bool ReducedMotion { get; set; }
     public bool GlassEnabled { get; set; } = true;
     public double GlassTransparency { get; set; }
@@ -16,7 +26,9 @@ public sealed class Preferences
     public double DockScale { get; set; } = .65;
     public bool HideInFullscreen { get; set; } = true;
     public bool ShowIsland { get; set; } = true;
-    public MaterialType MaterialType { get; set; } = MaterialType.Acrylic;
+    public IslandAccentColor IslandLyricsColor {get;set;}
+    public IslandAccentColor IslandProgressColor {get;set;}
+    public IslandAccentColor IslandMeterColor {get;set;}
     public static string DataDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GlassDock");
     private static string FilePath => Path.Combine(DataDirectory, "preferences.json");
     public static Preferences Load()
@@ -26,6 +38,10 @@ public sealed class Preferences
     }
     public Preferences Validated()
     {
+        if(SidebarAlwaysOnTop)SidebarPinned=true;
+        IslandLyricsColor=IslandPalette.Validate(IslandLyricsColor);
+        IslandProgressColor=IslandPalette.Validate(IslandProgressColor);
+        IslandMeterColor=IslandPalette.Validate(IslandMeterColor);
         GlassFramesPerSecond = Math.Clamp(GlassFramesPerSecond, 1, 60);
         GlassTransparency=double.IsFinite(GlassTransparency)?Math.Clamp(GlassTransparency,0,1):0;
         Magnification = Math.Clamp(Magnification, 0, .85);

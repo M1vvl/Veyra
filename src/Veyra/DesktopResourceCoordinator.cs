@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Interop;
@@ -45,7 +45,11 @@ internal sealed class DesktopResourceCoordinator(SidebarWindow sidebar,DesktopOr
     }
     private void RecoverShellVisibility()
     {
-        if(!sidebar.DesktopSuspended)DesktopNative.EnsureNativeShown(sidebar,true);
+        if(!sidebar.DesktopSuspended)
+        {
+            if(Program.Prefs.SidebarAlwaysOnTop)DesktopNative.PlaceAlwaysOnTop(sidebar);
+            else DesktopNative.EnsureNativeShown(sidebar,true);
+        }
         if(!boxes.DesktopSuspended)
         {
             if(boxes.Configuration.Enabled && boxes.GroupControl is Window control)DesktopNative.EnsureNativeShown(control,true);

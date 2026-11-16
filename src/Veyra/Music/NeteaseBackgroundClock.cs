@@ -9,25 +9,57 @@ namespace GlassDock.Music;
 /// Algorithm adapted from maker114/netease-lyric-api (MIT), see ThirdParty/NetEaseClock.</summary>
 internal sealed class NeteaseBackgroundClock : IDisposable
 {
-    internal sealed record Sample(double Seconds,long At);
+    internal sealed record Sample(double Seconds,long At,int Revision);
     private readonly record struct Candidate(long Address,int Value,long At);
     private readonly CancellationTokenSource _stop=new();
     private readonly object _lifecycleGate=new();
     private SafeProcessHandle? _handle;
     private long[] _addresses=[];
+    private long _progressAddress;
     private int _busy,_disposed;
+    private int _revision,_observedRevision;
+    private volatile bool _playing;
+    private double? _previousTrackSeconds;
+    private long _lastAdvance;
     private long _retryAfter,_processCheckAfter;
     private Sample? _sample;
-    internal Sample? Read()
+    private string? _trackKey;
+    internal void TrackChanged(string key)
     {
+        if(_trackKey==key)return;
+        bool previousTrack=_trackKey is not null;
+        _trackKey=key;
+        var previous=Volatile.Read(ref _sample);
+        _previousTrackSeconds=previousTrack?previous?.Seconds:null;
+        Interlocked.Increment(ref _revision);
+    }
+
+    internal Sample? Read(bool playing=true)
+    {
+        bool direct=false;
         lock(_lifecycleGate)
         {
             if(_disposed!=0)return null;
+            _playing=playing;
             if(Interlocked.CompareExchange(ref _busy,1,0)==0)
-                _=Task.Run(()=> {try {Update();} catch(Exception ex) {Program.Log("NetEase clock: "+ex.Message); _retryAfter=Environment.TickCount64+15000;} finally {Volatile.Write(ref _busy,0);}});
+            {
+                direct=Volatile.Read(ref _progressAddress)!=0;
+                if(!direct)_=Task.Run(UpdateSafely);
+            }
         }
+        // The media service already owns a background reader. Reading one verified
+        // double here avoids another thread-pool hop and one polling-frame delay.
+        if(direct)UpdateSafely();
         var sample=Volatile.Read(ref _sample);
-        return sample is not null && Environment.TickCount64-sample.At<1800?sample:null;
+        return sample is not null && sample.Revision==Volatile.Read(ref _revision)
+            && Environment.TickCount64-sample.At<250?sample:null;
+    }
+
+    private void UpdateSafely()
+    {
+        try {Update();}
+        catch(Exception ex) {Program.Log("NetEase clock: "+ex.Message);_retryAfter=Environment.TickCount64+2000;}
+        finally {Volatile.Write(ref _busy,0);}
     }
     private bool EnsureProcess()
     {
@@ -46,6 +78,14 @@ internal sealed class NeteaseBackgroundClock : IDisposable
             _handle?.Dispose();
             _handle=OpenProcess(0x410,false,process.Id);
             _addresses=[]; _retryAfter=0; _processCheckAfter=now+1000;
+            _progressAddress=0;
+            if(!_handle.IsInvalid)
+            {
+                var module=process.Modules.Cast<ProcessModule>().FirstOrDefault(item=>
+                    item.ModuleName.Equals("cloudmusic.dll",StringComparison.OrdinalIgnoreCase));
+                if(module is not null && NeteaseProgressSource.Locate(module.FileName) is long rva)
+                    _progressAddress=module.BaseAddress.ToInt64()+rva;
+            }
             return !_handle.IsInvalid;
         }
         finally {foreach(var process in processes)process.Dispose();}
@@ -53,7 +93,26 @@ internal sealed class NeteaseBackgroundClock : IDisposable
     private void Update()
     {
         if(_stop.IsCancellationRequested)return;
+        int revision=Volatile.Read(ref _revision);
+        if(_observedRevision!=revision)
+        {
+            _observedRevision=revision;
+            _retryAfter=0;
+            _lastAdvance=Environment.TickCount64;
+            Volatile.Write(ref _sample,null);
+        }
         if(!EnsureProcess()) {Volatile.Write(ref _sample,null); return;}
+        if(_progressAddress!=0 && ReadProcessMemory(_handle!,new nint(_progressAddress),out double nativeSeconds,8,out nuint bytes)
+            && bytes==8 && double.IsFinite(nativeSeconds) && nativeSeconds>=0 && nativeSeconds<=86400)
+        {
+            // This is the exact double written by the player's progress-event producer.
+            // Its address remains stable when song-specific heap objects are replaced.
+            if(revision!=Volatile.Read(ref _revision))return;
+            if(_previousTrackSeconds is >2 && Math.Abs(nativeSeconds-_previousTrackSeconds.Value)<.5)return;
+            _previousTrackSeconds=null;
+            Volatile.Write(ref _sample,new Sample(nativeSeconds,Environment.TickCount64,revision));
+            return;
+        }
         var addresses=_addresses;
         Span<int> values=stackalloc int[8];
         int count=0;
@@ -64,24 +123,38 @@ internal sealed class NeteaseBackgroundClock : IDisposable
         populated.Sort();
         if(count>=2 && populated[^1]-populated[0]<400)
         {
-            Volatile.Write(ref _sample,new Sample(populated[count/2]/1000d,Environment.TickCount64)); return;
+            double seconds=populated[count/2]/1000d;
+            long now=Environment.TickCount64;
+            var previous=Volatile.Read(ref _sample);
+            bool oldTrack=_previousTrackSeconds is >2 && Math.Abs(seconds-_previousTrackSeconds.Value)<.5;
+            if(previous is null || Math.Abs(seconds-previous.Seconds)>.005 || !_playing)_lastAdvance=now;
+            if(!oldTrack && now-_lastAdvance<350)
+            {
+                _previousTrackSeconds=null;
+                Volatile.Write(ref _sample,new Sample(seconds,now,revision));
+                return;
+            }
         }
         Volatile.Write(ref _sample,null);
-        if(Environment.TickCount64<_retryAfter)return;
-        _retryAfter=Environment.TickCount64+15000;
-        Discover();
+        if(!_playing || Environment.TickCount64<_retryAfter)return;
+        _retryAfter=Environment.TickCount64+2000;
+        Discover(revision);
     }
     private int? ReadInt(long address)
     {
         return ReadProcessMemory(_handle!,new nint(address),out int value,4,out nuint read) && read==4?value:null;
     }
-    private void Discover()
+    private void Discover(int revision)
     {
+        // Track objects are frequently replaced in the same native heap. Search the
+        // already verified neighborhoods before scanning the process again.
+        if(_addresses.Length>0 && TryNearby(revision))return;
         var candidates=new List<Candidate>();
         byte[] buffer=new byte[1024*1024];
         long cursor=0,total=0;
         var clock=Stopwatch.StartNew();
-        while(!_stop.IsCancellationRequested && candidates.Count<400000 && total<512L*1024*1024 && clock.ElapsedMilliseconds<6000)
+        while(!_stop.IsCancellationRequested && revision==Volatile.Read(ref _revision)
+            && candidates.Count<400000 && total<512L*1024*1024 && clock.ElapsedMilliseconds<6000)
         {
             if(VirtualQueryEx(_handle!,new nint(cursor),out var region,(nuint)Marshal.SizeOf<MemoryRegion>())==0)break;
             long size=checked((long)region.Size),next=region.Address.ToInt64()+size;
@@ -90,7 +163,7 @@ internal sealed class NeteaseBackgroundClock : IDisposable
             {
                 for(long offset=0;offset<size && candidates.Count<400000 && total<512L*1024*1024;offset+=buffer.Length)
                 {
-                    if(_stop.IsCancellationRequested)return;
+                    if(_stop.IsCancellationRequested || revision!=Volatile.Read(ref _revision))return;
                     int length=(int)Math.Min(buffer.Length,size-offset);total+=length;
                     if(!ReadProcessMemory(_handle!,region.Address+(nint)offset,buffer,(nuint)length,out nuint read))continue;
                     long at=Environment.TickCount64;
@@ -104,27 +177,67 @@ internal sealed class NeteaseBackgroundClock : IDisposable
             }
             cursor=next;
         }
-        // Require the same advancing time across two separated observations.
+        Confirm(candidates,revision,300);
+    }
+
+    private bool TryNearby(int revision)
+    {
+        var candidates=new List<Candidate>();
+        var visited=new HashSet<long>();
+        byte[] buffer=new byte[65536];
+        foreach(long address in _addresses)
+        {
+            for(int offset=-4;offset<=4;offset++)
+            {
+                if(_stop.IsCancellationRequested || revision!=Volatile.Read(ref _revision))return false;
+                long page=(address&~65535L)+offset*65536L;
+                if(page<0 || !visited.Add(page))continue;
+                if(!ReadProcessMemory(_handle!,new nint(page),buffer,(nuint)buffer.Length,out nuint read))continue;
+                long at=Environment.TickCount64;
+                for(int i=0;i+4<=(int)read;i+=4)
+                {
+                    int value=BitConverter.ToInt32(buffer,i);
+                    if(value>0 && value<10000)candidates.Add(new Candidate(page+i,value,at));
+                    if(candidates.Count>=60000)break;
+                }
+                if(candidates.Count>=60000)break;
+            }
+            if(candidates.Count>=60000)break;
+        }
+        return Confirm(candidates,revision,150);
+    }
+
+    private bool Confirm(List<Candidate> candidates,int revision,int interval)
+    {
+        // Two advancing observations exclude frozen objects left by the previous song.
         for(int pass=0;pass<2;pass++)
         {
-            if(_stop.Token.WaitHandle.WaitOne(900))return;
+            if(candidates.Count<2 || _stop.Token.WaitHandle.WaitOne(interval)
+                || revision!=Volatile.Read(ref _revision))return false;
             var refined=new List<Candidate>();
             foreach(var item in candidates)
             {
-                if(_stop.IsCancellationRequested)return;
+                if(_stop.IsCancellationRequested || revision!=Volatile.Read(ref _revision))return false;
                 int? value=ReadInt(item.Address);long now=Environment.TickCount64;
-                if(value.HasValue && Math.Abs(value.Value-item.Value-(now-item.At))<260)
+                if(value.HasValue && value.Value>item.Value && Math.Abs(value.Value-item.Value-(now-item.At))<85)
                     refined.Add(new Candidate(item.Address,value.Value,now));
             }
             candidates=refined;
         }
         var clusters=candidates.GroupBy(item=>item.Value/250).OrderByDescending(group=>group.Count());
         var best=clusters.FirstOrDefault(group=>group.Count()>=2);
-        if(best is null)return;
-        if(_stop.IsCancellationRequested)return;
+        if(best is null)return false;
+        if(_stop.IsCancellationRequested || revision!=Volatile.Read(ref _revision))return false;
         _addresses=best.Take(8).Select(item=>item.Address).ToArray();
         var readings=_addresses.Select(ReadInt).Where(v=>v.HasValue).Select(v=>v!.Value).Order().ToArray();
-        if(readings.Length>=2)Volatile.Write(ref _sample,new Sample(readings[readings.Length/2]/1000d,Environment.TickCount64));
+        if(readings.Length>=2)
+        {
+            _previousTrackSeconds=null;
+            _lastAdvance=Environment.TickCount64;
+            Volatile.Write(ref _sample,new Sample(readings[readings.Length/2]/1000d,_lastAdvance,revision));
+            return true;
+        }
+        return false;
     }
     public void Dispose()
     {
@@ -150,6 +263,7 @@ internal sealed class NeteaseBackgroundClock : IDisposable
     [DllImport("kernel32.dll",SetLastError=true)] private static extern SafeProcessHandle OpenProcess(uint access,bool inherit,int pid);
     [DllImport("kernel32.dll",SetLastError=true)] private static extern bool ReadProcessMemory(SafeProcessHandle handle,nint address,byte[] buffer,nuint length,out nuint read);
     [DllImport("kernel32.dll",SetLastError=true)] private static extern bool ReadProcessMemory(SafeProcessHandle handle,nint address,out int value,nuint length,out nuint read);
+    [DllImport("kernel32.dll",SetLastError=true)] private static extern bool ReadProcessMemory(SafeProcessHandle handle,nint address,out double value,nuint length,out nuint read);
     [DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(SafeProcessHandle handle,out uint code);
     [DllImport("kernel32.dll")] private static extern nuint VirtualQueryEx(SafeProcessHandle handle,nint address,out MemoryRegion region,nuint length);
 }

@@ -24,7 +24,7 @@ public class LocalLrcProvider : ILyricsProvider,IDisposable
         @"C:\Users\Public\Music"
     };
 
-    public async Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo)
+    public async Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo,CancellationToken cancellationToken=default)
     {
         if (_disposed || string.IsNullOrEmpty(mediaInfo.Title))
             return null;
@@ -39,23 +39,23 @@ public class LocalLrcProvider : ILyricsProvider,IDisposable
                 // 搜索所有可能的音乐文件夹
                 foreach (var folder in CommonMusicFolders)
                 {
-                    if(_disposed)return null;
+                    if(_disposed || cancellationToken.IsCancellationRequested)return null;
                     if (!Directory.Exists(folder))
                         continue;
 
                     var matchedFiles=new string?[possibleNames.Count];
                     foreach(string path in Directory.EnumerateFiles(folder,"*.lrc",SearchOption.AllDirectories))
                     {
-                        if(_disposed)return null;
+                        if(_disposed || cancellationToken.IsCancellationRequested)return null;
                         int rank=possibleNames.FindIndex(name=>Path.GetFileNameWithoutExtension(path).Equals(name,StringComparison.OrdinalIgnoreCase));
                         if(rank>=0 && matchedFiles[rank] is null)matchedFiles[rank]=path;
                     }
                     foreach(string? matchedFile in matchedFiles)
                     {
-                        if(_disposed)return null;
+                        if(_disposed || cancellationToken.IsCancellationRequested)return null;
                         if(matchedFile is null)continue;
                         var content=File.ReadAllText(matchedFile);
-                        if(_disposed)return null;
+                        if(_disposed || cancellationToken.IsCancellationRequested)return null;
                         var lines=LyricsParser.ParseLRC(content);
                         if(lines.Count>0)return lines;
                     }
@@ -67,7 +67,7 @@ public class LocalLrcProvider : ILyricsProvider,IDisposable
             {
                 return null;
             }
-        });
+        },cancellationToken);
     }
 
     private List<string> GenerateFileNames(string title, string artist)

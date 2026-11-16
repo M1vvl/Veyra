@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Windows.Graphics.Capture;
@@ -15,11 +15,13 @@ internal sealed unsafe class WindowCaptureSource : IDisposable
     private readonly Direct3D11CaptureFramePool _pool;
     private readonly GraphicsCaptureSession _session;
     private nint _frame,_poolInterface;
+    private int _disposed;
     private readonly List<(nint Pointer,ID3D11Texture2D Texture,ID3D11ShaderResourceView View)> _buffers=new(2);
     private ID3D11Texture2D? _texture;
     internal ID3D11ShaderResourceView? View { get; private set; }
     internal ID3D11Texture2D? Texture=>_texture;
     internal long Version { get; private set; }
+    internal long LastFrameAt { get; private set; }
     internal bool Closed { get; private set; }
     internal object Inspect()=>new {width=_size.Width,height=_size.Height,Version,Closed,ready=View is not null,cachedViews=_buffers.Count,nativeFrameOwnership=true};
     private Windows.Graphics.SizeInt32 _size;
@@ -89,6 +91,7 @@ internal sealed unsafe class WindowCaptureSource : IDisposable
                 _buffers.Add((texture,nativeTexture,view)); _texture=nativeTexture; View=view;
             }
             Version++;
+            LastFrameAt=Environment.TickCount64;
         }
         finally { if(access!=0)Marshal.Release(access); if(surface!=0)Marshal.Release(surface); }
         return true;
@@ -109,7 +112,19 @@ internal sealed unsafe class WindowCaptureSource : IDisposable
     private void ReleaseBuffers() {ReleaseFrame(); foreach(var buffer in _buffers) {buffer.View.Dispose(); buffer.Texture.Dispose();} _buffers.Clear();}
     public void Dispose()
     {
-        _item.Closed-=ItemClosed; _session.Dispose(); ReleaseBuffers(); _pool.Dispose(); Marshal.Release(_poolInterface); _poolInterface=0; _device.Dispose();
+        if(Interlocked.Exchange(ref _disposed,1)!=0)return;
+        Closed=true;
+        nint poolInterface=_poolInterface;
+        _poolInterface=0;
+        // WGC shutdown can wait on DWM. Keep that wait off the window dispatcher.
+        _=Task.Run(()=> {
+            try {_item.Closed-=ItemClosed; _session.Dispose();}
+            catch(Exception exception) {Program.Log("Capture session shutdown: "+exception.Message);}
+            finally {
+                try {ReleaseBuffers(); _pool.Dispose();}
+                finally {if(poolInterface!=0)Marshal.Release(poolInterface); _device.Dispose();}
+            }
+        });
     }
     private static GraphicsCaptureItem CreateItem(nint window)
     {

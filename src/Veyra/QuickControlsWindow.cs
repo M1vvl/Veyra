@@ -12,7 +12,7 @@ using GlassDock.Shell;
 
 namespace GlassDock;
 
-internal sealed class QuickControlsWindow : GlassWindow
+internal sealed partial class QuickControlsWindow : GlassWindow
 {
     private static readonly Brush Secondary=new SolidColorBrush(Color.FromRgb(62,74,89));
     private readonly SidebarWindow _sidebar;
@@ -60,7 +60,7 @@ internal sealed class QuickControlsWindow : GlassWindow
         Deactivated+=(_,_)=> { if(!Program.CapturePreview && IsVisible && Program.TrayMenus?.Active!=true && !_sidebar.IsRailInteraction) Close(); };
         PreviewKeyDown+=(_,e)=> { if(e.Key==Key.Escape) { e.Handled=true; Close(); } };
         _audioDelay.Tick+=(_,_)=>CommitVolume();
-        Closed+=(_,_)=> { CommitVolume(); _closed=true; _generation++; _brightness.Dispose(); _trayPanel?.Dispose(); };
+        Closed+=(_,_)=> { CommitVolume(); StopNetworkWatching(); _closed=true; _generation++; _brightness.Dispose(); _trayPanel?.Dispose(); };
     }
     public void PositionBeside(SidebarWindow sidebar)
     {
@@ -128,7 +128,7 @@ internal sealed class QuickControlsWindow : GlassWindow
     private async Task ShowSectionAsync(ControlSection section)
     {
         if(_closed) return;
-        CommitVolume(); _section=section; _sectionReady=false; int generation=++_generation;
+        StopNetworkWatching(); CommitVolume(); _section=section; _sectionReady=false; int generation=++_generation;
         _heading.Text=section==ControlSection.Wifi?"网络":"控制中心";
         foreach(var card in _cards) card.Dispose();
         _body.Children.Clear(); _cards.Clear(); Status("");
@@ -317,30 +317,6 @@ internal sealed class QuickControlsWindow : GlassWindow
         }
         slider.ValueCommitted+=(_,_)=>Commit();
         var material=MaterialSurface(slider,13,.02f); material.Margin=new Thickness(0,6,0,0); card.Children.Add(material);
-    }
-    private async Task BuildWifi(int generation)
-    {
-        var state=Ui.Text("—",12,Secondary); var heading=Card("Wi-Fi",state);
-        var snapshot=await WifiService.GetSnapshotAsync(); if(!Current(generation)) return;
-        _wifiSnapshot=snapshot;
-        heading.ToolTip=snapshot.Error;
-        if(!snapshot.IsAvailable) { state.Text="不可用"; return; }
-        state.Text=snapshot.HardwareBlocked?"硬件已关闭":snapshot.RadioEnabled switch { true=>"已开启",false=>"已关闭",null=>"状态未知" };
-        var actions=new WrapPanel();
-        var radio=ActionButton(snapshot.RadioEnabled==true?"关闭 Wi-Fi":"开启 Wi-Fi","切换 Wi-Fi",()=>Run(async()=> { var result=await WifiService.SetRadioAsync(snapshot.RadioEnabled!=true); if(Current(generation)) { await ShowSectionAsync(ControlSection.Wifi); Status(result.Message); } }),135,34); radio.IsEnabled=!snapshot.HardwareBlocked; actions.Children.Add(radio);
-        actions.Children.Add(ActionButton("刷新","刷新网络",()=>Run(async()=> { await WifiService.GetSnapshotAsync(true); await Task.Delay(1700); if(Current(generation)) ShowSection(ControlSection.Wifi); }),135,34));
-        heading.Children.Add(actions);
-        if(snapshot.Networks.Count==0) heading.Children.Add(Ui.Text("暂无可用网络",12,Secondary));
-        foreach(var network in snapshot.Networks)
-        {
-            var card=Card(network.Ssid);
-            string detail=network.Connected?"已连接":network.IsInRange?$"信号 {network.Signal}% · {(network.SecurityKnown?(network.Secured?"加密":"开放"):"安全类型未知")}":"已保存 · 信号未确认";
-            card.Children.Add(Ui.Text(detail,11,Secondary));
-            var action=ActionButton(network.Connected?"断开连接":"连接","连接 "+network.Ssid,()=>Run(async()=> { var result=network.Connected?await WifiService.DisconnectAsync(network.InterfaceId):await WifiService.ConnectAsync(network); if(!Current(generation)) return; Status(result.Message); await Task.Delay(1200); if(Current(generation)) { await ShowSectionAsync(ControlSection.Wifi); Status(result.Message); } }),110,34);
-            action.IsEnabled=network.Connected || network.Connectable && (network.HasProfile || !network.Secured); card.Children.Add(action);
-            if(!action.IsEnabled) { action.ToolTip=!network.HasProfile && network.Secured?"此网络尚未保存，当前版本暂不支持首次密码配置":network.UnavailableReason; ToolTipService.SetShowOnDisabled(action,true); }
-            if(!network.HasProfile && network.Secured) card.Children.Add(Ui.Text("需要首次配置",11,Secondary));
-        }
     }
     private void BuildPower()
     {

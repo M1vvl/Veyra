@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -26,10 +26,12 @@ internal sealed class SidebarWindow : GlassWindow
     private readonly DispatcherTimer _inputTimer=new() { Interval=TimeSpan.FromMilliseconds(450) };
     private readonly TextBlock _clock=Ui.Text("",12),_input=Ui.Text("—",19),_power=Ui.Text("",10,Ui.Muted);
     private readonly Sidebar.VolumeLevelIcon _volumeIcon=new() { Width=28,Height=28 };
+    private readonly TextBlock _networkIcon=Ui.Glyph("\uE9CE");
+    private bool _readingNetwork,_networkReadPending;
     private readonly AudioService _audioState=new();
     private bool _readingVolume,_pressingControl;
     private long _lastVolumeRead;
-    private readonly Border _handle=new() { Width=5,CornerRadius=new CornerRadius(2),Background=new SolidColorBrush(Color.FromArgb(100,125,154,190)),Cursor=Cursors.Hand,ToolTip="左拉切换固定 / 自动隐藏" };
+    private readonly Border _handle=new() { Width=5,CornerRadius=new CornerRadius(2),Background=new SolidColorBrush(Color.FromArgb(100,125,154,190)),Cursor=Cursors.Hand,ToolTip="左拉切换自动隐藏 / 固定 / 始终置顶" };
     private readonly Border _handleArea=new() { Width=18,Background=Brushes.Transparent,Cursor=Cursors.SizeWE };
     private double _target=HiddenOffset,_velocity,_lastTime;
     private long _lastInside,_revealBlockedUntil;
@@ -43,6 +45,7 @@ internal sealed class SidebarWindow : GlassWindow
     internal bool CapturedInteraction=>_pressingControl || _pull.Tracking;
     internal void SetDesktopSuspended(bool suspended)
     {
+        suspended=suspended && !Program.Prefs.SidebarAlwaysOnTop;
         if(_desktopSuspended==suspended)return;
         _desktopSuspended=suspended;
         if(suspended)
@@ -63,6 +66,19 @@ internal sealed class SidebarWindow : GlassWindow
     {
         _magnetic=new Sidebar.SidebarMagnetism(_stack);
         var context=new ContextMenu();
+        var modeMenu=new MenuItem {Header="状态栏模式"};
+        var modes=new[]{SidebarDisplayMode.AutoHide,SidebarDisplayMode.Fixed,SidebarDisplayMode.AlwaysOnTop};
+        var labels=new[]{"自动隐藏","固定","始终置顶"};
+        for(int i=0;i<modes.Length;i++)
+        {
+            var mode=modes[i];
+            var item=Ui.Menu(labels[i],()=> {Program.Prefs.SidebarMode=mode;Program.ApplyPreferences();});
+            item.IsCheckable=true;
+            context.Opened+=(_,_)=>item.IsChecked=Program.Prefs.SidebarMode==mode;
+            modeMenu.Items.Add(item);
+        }
+        context.Items.Add(modeMenu);
+        context.Items.Add(new Separator());
         context.Items.Add(Ui.Menu("新建映射盒…",()=>Program.DesktopBoxes?.PromptCreateBox()));
         context.Items.Add(Ui.Menu("管理收纳盒…",()=>Program.DesktopBoxes?.ShowSettings()));
         context.Items.Add(new Separator()); context.Items.Add(Ui.Menu("设置…",Program.OpenSettings));
@@ -79,7 +95,8 @@ internal sealed class SidebarWindow : GlassWindow
         System.Windows.Automation.AutomationProperties.SetName(inputArea,"中英文切换");
         inputArea.MouseLeftButtonUp+=async(_,e)=> { e.Handled=true; await ToggleInput(); };
         _stack.Children.Add(inputArea);
-        Add("\uE701","Wi-Fi 与网络",()=>TogglePanel(ControlSection.Wifi));
+        _stack.Children.Add(Ui.Button(_networkIcon,"Wi-Fi 与网络",()=>TogglePanel(ControlSection.Wifi),42,42));
+        Windows.Networking.Connectivity.NetworkInformation.NetworkStatusChanged+=NetworkStatusChanged;
         _stack.Children.Add(Ui.Button(_volumeIcon,"音量",()=>TogglePanel(ControlSection.Audio),42,42));
         var battery=new StackPanel { HorizontalAlignment=HorizontalAlignment.Center }; battery.Children.Add(Ui.Glyph("\uE83F",23)); _power.HorizontalAlignment=HorizontalAlignment.Center; battery.Children.Add(_power);
         _stack.Children.Add(Ui.Button(battery,"电池与电源计划",()=>TogglePanel(ControlSection.Power),42,48));
@@ -106,7 +123,7 @@ internal sealed class SidebarWindow : GlassWindow
         ContentLayer.LostMouseCapture+=(_,_)=> { if(Mouse.LeftButton!=MouseButtonState.Pressed)_pressingControl=false; };
         _inputTimer.Tick+=async(_,_)=>await RefreshInput();
         Loaded+=async(_,_)=> { Reposition(); await UpdateStatus(); if(!_desktopSuspended)_clockTimer.Start(); ApplyPreferences(); };
-        Closed+=(_,_)=> { if(Program.TrayMenus is { } menus) menus.Changed-=TrayMenuChanged; CancelPull(); _audioState.Dispose(); _hoverTimer.Stop(); _clockTimer.Stop(); _inputTimer.Stop(); CompositionTarget.Rendering-=Animate; _panel?.Close(); };
+        Closed+=(_,_)=> { Windows.Networking.Connectivity.NetworkInformation.NetworkStatusChanged-=NetworkStatusChanged; if(Program.TrayMenus is { } menus) menus.Changed-=TrayMenuChanged; CancelPull(); _audioState.Dispose(); _hoverTimer.Stop(); _clockTimer.Stop(); _inputTimer.Stop(); CompositionTarget.Rendering-=Animate; _panel?.Close(); };
     }
     private Button Add(string glyph,string label,Action action) { var button=Ui.Button(Ui.Glyph(glyph),label,action,42,42); _stack.Children.Add(button); return button; }
     private void Divider()=>_stack.Children.Add(new Border { Height=1,Width=26,Background=new SolidColorBrush(Color.FromArgb(28,65,80,100)),Margin=new Thickness(0,7,0,7) });
@@ -164,10 +181,12 @@ internal sealed class SidebarWindow : GlassWindow
     internal void UpdateTrayHostBounds()=>Reposition();
     public override void ApplyPreferences()
     {
+        if(_desktopSuspended && Program.Prefs.SidebarAlwaysOnTop) {SetDesktopSuspended(false);return;}
         base.ApplyPreferences();
         _panel?.ApplyPreferences();
         UpdatePullFeedback();
         if(Program.Prefs.SidebarPinned) Reveal(); else if(_panel?.IsVisible!=true) SetOpen(false);
+        if(Program.Prefs.SidebarAlwaysOnTop && IsLoaded)DesktopNative.PlaceAlwaysOnTop(this);
     }
     private void Reveal()
     {
@@ -290,7 +309,7 @@ internal sealed class SidebarWindow : GlassWindow
         if(Mouse.Captured==_handleArea) _handleArea.ReleaseMouseCapture();
         if(result.Toggle)
         {
-            Program.Prefs.SidebarPinned=!Program.Prefs.SidebarPinned; Program.Prefs.Save();
+            Program.Prefs.SidebarMode=NextPullMode; Program.ApplyPreferences();
             if(Program.Prefs.SidebarPinned) Reveal();
             else
             {
@@ -305,12 +324,23 @@ internal sealed class SidebarWindow : GlassWindow
     {
         _pull.End(true); if(Mouse.Captured==_handleArea) _handleArea.ReleaseMouseCapture(); UpdatePullFeedback();
     }
+    private SidebarDisplayMode NextPullMode=>Program.Prefs.SidebarMode switch
+    {
+        SidebarDisplayMode.AutoHide=>SidebarDisplayMode.Fixed,
+        SidebarDisplayMode.Fixed=>SidebarDisplayMode.AlwaysOnTop,
+        _=>SidebarDisplayMode.AutoHide
+    };
     private void UpdatePullFeedback()
     {
         _handle.Opacity=_pull.Ready?1:Program.Prefs.SidebarPinned?.85:.45;
         _handle.Width=_pull.Ready?6:5;
-        string tip=_pull.Ready?(Program.Prefs.SidebarPinned?"松开收起":"松开固定")
-            :Program.Prefs.SidebarPinned?"左拉竖条：收起":"左拉竖条：固定";
+        string target=NextPullMode switch
+        {
+            SidebarDisplayMode.Fixed=>"固定",
+            SidebarDisplayMode.AlwaysOnTop=>"始终置顶",
+            _=>"自动隐藏"
+        };
+        string tip=(_pull.Ready?"松开：":"左拉竖条：")+target;
         _handle.ToolTip=_handleArea.ToolTip=tip;
     }
     private void TrayMenuChanged(object? sender,EventArgs e)
@@ -322,8 +352,28 @@ internal sealed class SidebarWindow : GlassWindow
     private async Task UpdateStatus()
     {
         _clock.Text=DateTime.Now.ToString("HH:mm\nMM/dd"); var battery=PowerService.ReadBattery(); _power.Text=battery.Present?(battery.Percent is int percent?percent+"%":"—"):"电源";
+        await RefreshNetwork();
         await RefreshInput();
         await RefreshVolume();
+    }
+    private void NetworkStatusChanged(object sender)
+    {
+        if(Dispatcher.HasShutdownStarted)return;
+        _=Dispatcher.BeginInvoke(new Action(async()=> {if(IsLoaded && !_desktopSuspended)await RefreshNetwork();}));
+    }
+    private async Task RefreshNetwork()
+    {
+        if(_readingNetwork) {_networkReadPending=true;return;}
+        _readingNetwork=true;
+        try {
+            do {
+                _networkReadPending=false;
+                var state=await NetworkConnections.ReadAsync();
+                if(!IsLoaded || _desktopSuspended)return;
+                _networkIcon.Text=state.Glyph;_networkIcon.ToolTip=state.Description;
+            } while(_networkReadPending);
+        }
+        finally {_readingNetwork=false;}
     }
     private async Task RefreshVolume()
     {

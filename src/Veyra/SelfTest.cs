@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
@@ -21,7 +21,109 @@ internal static class SelfTest
         var results=new List<object>();
         void Test(string name,Action action) { try { action(); results.Add(new { name,pass=true,error="" }); } catch(Exception ex) { results.Add(new { name,pass=false,error=ex.ToString() }); } }
         void Assert(bool value,string reason) { if(!value) throw new InvalidOperationException(reason); }
+        Test("Sidebar modes retain legacy preferences and persist fullscreen topmost",()=> {
+            var legacy=JsonSerializer.Deserialize<Preferences>("{\"SidebarPinned\":true}")!.Validated();
+            Assert(legacy.SidebarMode==SidebarDisplayMode.Fixed,"Legacy fixed mode changed");
+            legacy.SidebarMode=SidebarDisplayMode.AlwaysOnTop;
+            var restored=JsonSerializer.Deserialize<Preferences>(JsonSerializer.Serialize(legacy))!.Validated();
+            Assert(restored.SidebarAlwaysOnTop && restored.SidebarPinned,"Always-on-top mode was not persisted");
+            restored.SidebarMode=SidebarDisplayMode.AutoHide;
+            Assert(!restored.SidebarPinned && !restored.SidebarAlwaysOnTop,"Auto-hide retained a topmost override");
+        });
         Test("Actual shipped HLSL VS/PS compile + cbuffer",GlassRenderer.ValidateShader);
+        Test("Lyric clock stays monotonic through quantization, jitter and a transient zero",()=> {
+            var clock=new Island.IslandPlaybackClock();
+            clock.Observe(10,true,0);
+            int revision=clock.Revision;
+            double previous=10;
+            for(int i=1;i<=320;i++)
+            {
+                double now=i*.0125;
+                if(i%2==0)
+                {
+                    double sample=10+Math.Floor(now*10)/10+(i%4==0?.035:-.035);
+                    clock.Observe(i==80 || i==82?0:sample,true,now);
+                }
+                double current=clock.Read(now);
+                Assert(current>=previous,"A normal playback sample reversed the lyric clock");
+                Assert(current-previous<.025,"An ordinary sample made the lyric clock leap");
+                previous=current;
+            }
+            Assert(clock.Revision==revision,"A brief zero sample was mistaken for a seek");
+            Assert(Math.Abs(clock.Read(4)-14)<.2,"Jitter filtering lost synchronization");
+            Assert(clock.Read(7)==clock.Read(8),"Missing timeline data advances forever");
+        });
+        Test("Lyric clock confirms real seeks and holds pause without snapping",()=> {
+            var clock=new Island.IslandPlaybackClock();
+            clock.Observe(10,true,0);
+            int revision=clock.Revision;
+            clock.Observe(40,true,.1);
+            clock.Observe(40.01,true,.11);
+            clock.Observe(40.025,true,.125);
+            Assert(clock.Revision==revision,"A seek was accepted before transient samples were excluded");
+            clock.Observe(40.075,true,.175);
+            Assert(clock.Revision==revision+1 && Math.Abs(clock.Read(.175)-40.075)<.0001,
+                "A confirmed external seek did not resynchronize");
+            clock.Observe(5,false,.2,true);
+            Assert(clock.Read(1)==5,"Explicit backward seek or pause drifted");
+            clock.Observe(5,true,1);
+            Assert(clock.Read(1.1)>5,"Resume did not restart the lyric clock");
+            clock.Reset();
+            Assert(clock.Read(2)==0,"A new track retained the previous clock");
+        });
+        Test("Compact word lyrics paginate without horizontal transforms",()=> {
+            var view=new Island.IslandCompactLyrics();
+            view.Measure(new Size(130,42));view.Arrange(new Rect(0,0,130,42));
+            var line=new LyricLine {Time=TimeSpan.FromSeconds(10),Text=new string('字',60)};
+            view.ShowLine(line,16,10);
+            string first=new System.Windows.Documents.TextRange(view.ContentStart,view.ContentEnd).Text;
+            view.ShowLine(line,16,15);
+            string last=new System.Windows.Documents.TextRange(view.ContentStart,view.ContentEnd).Text;
+            Assert(first.Length<line.Text.Length && last.Length<line.Text.Length,"Long lyrics were not segmented");
+            Assert(view.RenderTransform.Value.IsIdentity,"Compact lyrics retained a sliding transform");
+            Assert(view.ToolTip?.ToString()?.Contains("估算")==true,"Estimated word timings were not labeled");
+            line=new LyricLine {Time=TimeSpan.FromSeconds(10),Text="甲乙",Words=new() {
+                new LyricWord {Text="甲",Time=TimeSpan.FromSeconds(10),Duration=TimeSpan.FromSeconds(1)},
+                new LyricWord {Text="乙",Time=TimeSpan.FromSeconds(12),Duration=TimeSpan.FromSeconds(1)}}};
+            view.ShowLine(line,14,12);
+            Assert(view.ToolTip?.ToString()=="逐字歌词","Available word timings were discarded");
+            var yrc=Music.LyricsParser.ParseYRC("[10000,2000](10000,1000,0)甲(11000,1000,0)乙");
+            Assert(yrc.Count==1 && yrc[0].Words?.Count==2 && yrc[0].Words![0].Text=="甲"
+                && yrc[0].Words![0].Time==TimeSpan.FromSeconds(10) && yrc[0].Words![1].Text=="乙",
+                "YRC prefix timings shifted words or dropped the final word");
+        });
+        Test("Visible glass refreshes captures across desktop and fullscreen presentation",()=> {
+            var state=new CapturePresentationState();
+            Assert(!state.Observe(1,false,0,0,2560,1440),"Initial desktop unnecessarily reset capture");
+            Assert(state.Observe(2,true,0,0,2560,1440),"Entering fullscreen retained the desktop session");
+            for(int i=0;i<100;i++)
+                Assert(!state.Observe(2,true,0,0,2560,1440),"Stable fullscreen repeatedly recreated captures");
+            Assert(state.Observe(1,false,0,0,2560,1440),"Returning to desktop retained the fullscreen session");
+            Assert(!state.Observe(3,false,100,100,800,600),"A restored window unnecessarily reset capture");
+            Assert(state.Observe(3,true,0,0,2560,1440),"Same-window fullscreen entry was missed");
+            Assert(state.Observe(4,true,0,0,2560,1440),"Switching fullscreen applications retained old captures");
+            Assert(state.Observe(4,false,100,100,800,600),"Restoring a fullscreen window was missed");
+        });
+        Test("Capture presentation ignores invalid foreground observations without losing recovery",()=> {
+            var state=new CapturePresentationState();
+            state.Observe(1,true,0,0,1920,1080);
+            Assert(!state.Observe(0,false,0,0,0,0),"A transient missing foreground reset capture");
+            Assert(!state.Observe(2,false,0,0,0,0),"An empty window changed presentation state");
+            Assert(state.Observe(2,false,0,0,1920,1080),"Desktop recovery was lost after an invalid foreground");
+        });
+        Test("Window capture shutdown never waits for DWM on the dispatcher",()=> {
+            var capture=SharedDesktopCapture.Acquire(new Int32Rect(0,0,100,100));
+            try
+            {
+                using var fixture=new System.Windows.Interop.HwndSource(new System.Windows.Interop.HwndSourceParameters("Veyra capture shutdown fixture") {Width=16,Height=16,WindowStyle=unchecked((int)0x90000000)});
+                var source=new WindowCaptureSource(fixture.Handle,capture.Device);
+                var clock=System.Diagnostics.Stopwatch.StartNew();
+                source.Dispose();
+                Assert(clock.ElapsedMilliseconds<100,"Capture shutdown blocked its caller");
+                source.Dispose();
+            }
+            finally {capture.Release();}
+        });
         Test("Native overlay opacity and color key remain separate from captured pixels",()=> {
             var hidden=NativeWindowComposition.FromAttributes(0x80080,true,0,0,2);
             Assert(!hidden.Visible && !hidden.CanOcclude,"A zero-opacity native overlay can hide the underlying desktop");

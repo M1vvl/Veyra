@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
@@ -30,6 +30,10 @@ public static class Program
     public static int Main(string[] args)
     {
         if (TaskbarLease.RunWatchdogIfRequested(args)) return 0;
+        if(args.Length==1 && args[0]=="--network-check")return Services.NetworkControlProbe.Run();
+        if(args.Length==1 && args[0]=="--media-sync-check")return Music.MediaSynchronizationProbe.Run(false);
+        if(args.Length==1 && args[0]=="--media-sync-live")return Music.MediaSynchronizationProbe.Run(true);
+        if(args.Length>=1 && args[0]=="--media-session-check")return Music.MediaSynchronizationProbe.InspectSessions(args.Skip(1).ToArray());
         if(args.Length==2 && args[0]=="--compile-glass-shaders") { Rendering.GlassRenderer.CompileShaderAssets(args[1]); return 0; }
         if(args.Length==1 && args[0]=="--tray-snapshot") { Console.Write(System.Text.Json.JsonSerializer.Serialize(NativeTrayCatalog.CaptureSnapshot())); return 0; }
         if(args.Length==1 && args[0]=="--diagnose-shell") { Console.Write(System.Text.Json.JsonSerializer.Serialize(TrayCompatibilityProfile.Capture(),new System.Text.Json.JsonSerializerOptions { WriteIndented=true })); return 0; }
@@ -136,6 +140,7 @@ public static class Program
         }
 
         Dock?.ApplyPreferences(); Sidebar?.ApplyPreferences(); DesktopBoxes?.ApplyPreferences(); Island?.ApplyPreferences();
+        DesktopResources?.Update(true);
         foreach(var settings in Application.Current.Windows.OfType<SettingsWindow>())settings.ApplyPreferences();
     }
     internal static void OpenSettings()

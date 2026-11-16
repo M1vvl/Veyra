@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -23,6 +23,9 @@ internal sealed class SharedDesktopCapture
     private readonly WindowBackgroundScene _scene;
     private int _references;
     private long _lastPoll;
+    private static long _presentationVersion;
+    private long _observedPresentationVersion;
+    internal static void InvalidatePresentation()=>Interlocked.Increment(ref _presentationVersion);
     private long _desktopGeneration=SessionSurfaceState.Generation;
     private ID3D11VertexShader? _vertexShader;
     private ID3D11PixelShader? _pixelShader;
@@ -122,7 +125,9 @@ internal sealed class SharedDesktopCapture
         }
         long now=Environment.TickCount64;
         // Dock/sidebar timers often run in the same dispatcher turn. One capture serves both.
-        if(DesktopTexture is not null && now-_lastPoll<8) return;
+        long presentationVersion=Volatile.Read(ref _presentationVersion);
+        if(DesktopTexture is not null && now-_lastPoll<8 && presentationVersion==_observedPresentationVersion)return;
+        _observedPresentationVersion=presentationVersion;
         _lastPoll=now;
         if(_scene.Update()) { Version++; HasCurrentFrame=true; }
     }

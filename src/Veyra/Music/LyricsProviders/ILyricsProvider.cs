@@ -11,5 +11,5 @@ public interface ILyricsProvider
 {
     string Name { get; }
     int Priority { get; }
-    Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo);
+    Task<List<LyricLine>?> GetLyricsAsync(MediaInfo mediaInfo,CancellationToken cancellationToken=default);
 }

@@ -35,7 +35,11 @@ public sealed record WifiSnapshot(
     string? ConnectedName,
     IReadOnlyList<WifiInterface> Interfaces,
     IReadOnlyList<WifiNetwork> Networks,
-    string? Error);
+    string? Error)
+{
+    internal NetworkConnectionSnapshot Connections {get;init;}=new(false,null,[]);
+    public bool ScanAccessDenied {get;init;}
+}
 
 public sealed record WifiOperationResult(bool Succeeded, string Message);
 
@@ -51,6 +55,8 @@ public static class WifiService
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(4);
     private static readonly object SnapshotSync=new();
     private static Task<WifiSnapshot>? _pendingSnapshot;
+    private static Task<WifiSnapshot>? _queuedScan;
+    private static bool _pendingIncludesScan;
 
     public static Task<WifiSnapshot> GetSnapshotAsync(
         bool scan = false,
@@ -60,11 +66,23 @@ public static class WifiService
         {
             // Overview and Network often request the same native snapshot while
             // navigating. Reuse that read instead of reporting the WLAN gate as unavailable.
-            if(!scan && _pendingSnapshot is { IsCompleted:false })return _pendingSnapshot.WaitAsync(cancellationToken);
+            if(_pendingSnapshot is { IsCompleted:false }) {
+                if(scan && !_pendingIncludesScan)
+                    return (_queuedScan??=ScanAfterReadAsync(_pendingSnapshot)).WaitAsync(cancellationToken);
+                return _pendingSnapshot.WaitAsync(cancellationToken);
+            }
+            _queuedScan=null;
+            _pendingIncludesScan=scan;
             _pendingSnapshot=RunBoundedAsync(()=>ReadSnapshot(scan),
-                message=>new WifiSnapshot(false,null,false,null,[],[],message),CancellationToken.None);
+                message=>new WifiSnapshot(false,null,false,null,[],[],message) {Connections=NetworkConnections.Read()},CancellationToken.None);
             return _pendingSnapshot.WaitAsync(cancellationToken);
         }
+    }
+
+    private static async Task<WifiSnapshot> ScanAfterReadAsync(Task<WifiSnapshot> pending)
+    {
+        await pending.ConfigureAwait(false);
+        return await GetSnapshotAsync(true).ConfigureAwait(false);
     }
 
     public static Task<WifiOperationResult> SetRadioAsync(
@@ -149,6 +167,8 @@ public static class WifiService
         var interfaces = new List<WifiInterface>();
         var networks = new List<WifiNetwork>();
         var errors = new List<string>();
+        var connections=NetworkConnections.Read();
+        bool accessDenied=false;
         string? connectedName = null;
 
         foreach (var nativeInterface in ReadInterfaces(client.Handle))
@@ -159,25 +179,28 @@ public static class WifiService
             bool hardwareBlocked = radios.Count > 0 && radios.All(radio => radio.HardwareState == 2);
             interfaces.Add(new WifiInterface(id, nativeInterface.Description, enabled, hardwareBlocked, StateName(nativeInterface.State)));
 
-            if (nativeInterface.State == 1)
-                connectedName ??= ReadConnectedName(client.Handle, id);
+            var active=connections.Connections.FirstOrDefault(item=>item.AdapterId==id && item.Kind==NetworkConnectionKind.Wifi);
+            string? activeProfile=nativeInterface.State==1 ? ReadConnectedName(client.Handle,id)??active?.Name : null;
+            string? activeSsid=nativeInterface.State==1 ? active?.Ssid : null;
+            connectedName??=activeSsid??activeProfile;
 
             if (scan && enabled != false)
             {
                 uint scanResult = WlanScan(client.Handle, ref id, nint.Zero, nint.Zero, nint.Zero);
+                accessDenied|=scanResult==5;
                 if (scanResult != 0) errors.Add(DescribeError(scanResult, "刷新 Wi-Fi"));
             }
 
             var profiles = ReadProfileNames(client.Handle, id, errors);
-            uint result = WlanGetAvailableNetworkList(client.Handle, ref id, 2, nint.Zero, out nint memory);
+            uint result = WlanGetAvailableNetworkList(client.Handle, ref id, 0, nint.Zero, out nint memory);
+            accessDenied|=result==5;
             if (result != 0)
             {
                 if (enabled != false) errors.Add(DescribeError(result, "读取 Wi-Fi 网络"));
-                foreach (string profile in profiles)
+                if(nativeInterface.State==1 && (activeSsid??activeProfile) is { } connected)
                 {
-                    networks.Add(new WifiNetwork(id, profile, profile, 0, true,
-                        string.Equals(profile, connectedName, StringComparison.Ordinal),
-                        true, "已保存的网络，当前信号和安全类型尚未确认")
+                    networks.Add(new WifiNetwork(id,connected,activeProfile??"",active?.Signal??0,true,
+                        true,true,null)
                     {
                         IsInRange = false,
                         SecurityKnown = false
@@ -198,6 +221,8 @@ public static class WifiService
                     if (string.IsNullOrEmpty(ssid)) ssid = "隐藏网络";
                     bool connected = (item.Flags & 1) != 0;
                     string profile = profiles.Contains(item.ProfileName) ? item.ProfileName : "";
+                    connected|=nativeInterface.State==1 && (string.Equals(profile,activeProfile,StringComparison.Ordinal) && profile.Length>0
+                        || string.Equals(ssid,activeSsid,StringComparison.Ordinal));
                     var network = new WifiNetwork(id, ssid, profile, (int)Math.Min(item.SignalQuality, 100),
                         item.SecurityEnabled != 0, connected, item.Connectable != 0,
                         item.Connectable != 0 ? null : DescribeReason(item.NotConnectableReason))
@@ -218,10 +243,17 @@ public static class WifiService
         if (interfaces.Count == 0) errors.Add("未检测到无线网卡");
         return new WifiSnapshot(interfaces.Count > 0, radioEnabled,
             interfaces.Count > 0 && interfaces.All(item => item.HardwareBlocked), connectedName,
-            interfaces, networks.OrderByDescending(item => item.Connected)
-                .ThenByDescending(item => item.Signal).ToList(),
-            errors.Count == 0 ? null : string.Join("\n", errors.Distinct()));
+            interfaces,OrderNetworks(networks),
+            errors.Count == 0 ? null : string.Join("\n", errors.Distinct())) {Connections=connections,ScanAccessDenied=accessDenied};
     }
+
+    internal static IReadOnlyList<WifiNetwork> OrderNetworks(IEnumerable<WifiNetwork> networks)
+        =>networks.Where(item=>item.Connected || item.IsInRange)
+            .GroupBy(item=>(item.InterfaceId,item.Ssid,item.Secured))
+            .Select(group=>group.OrderByDescending(item=>item.Connected).ThenByDescending(item=>item.HasProfile)
+                .ThenByDescending(item=>item.Signal).First())
+            .OrderByDescending(item=>item.Connected).ThenByDescending(item=>item.Signal)
+            .ThenBy(item=>item.Ssid,StringComparer.CurrentCulture).ToList();
 
     private static WifiOperationResult SetRadio(bool enabled, Guid? requestedInterface)
     {

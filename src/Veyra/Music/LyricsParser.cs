@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -93,9 +93,14 @@ public static class LyricsParser
             var wordMatches = Regex.Matches(content, @"\((\d+),(\d+),\d+\)");
 
             int lastIndex = 0;
-            foreach (Match wordMatch in wordMatches)
+            bool prefixTiming=wordMatches.Count>0 && string.IsNullOrWhiteSpace(content.Substring(0,wordMatches[0].Index));
+            for(int wordIndex=0;wordIndex<wordMatches.Count;wordIndex++)
             {
-                var wordText = content.Substring(lastIndex, wordMatch.Index - lastIndex);
+                Match wordMatch=wordMatches[wordIndex];
+                int textStart=wordMatch.Index+wordMatch.Length;
+                int textEnd=wordIndex+1<wordMatches.Count?wordMatches[wordIndex+1].Index:content.Length;
+                var wordText=prefixTiming?content.Substring(textStart,textEnd-textStart)
+                    :content.Substring(lastIndex,wordMatch.Index-lastIndex);
                 if (!string.IsNullOrEmpty(wordText))
                 {
                     long wordStartMs = long.Parse(wordMatch.Groups[1].Value);

@@ -17,9 +17,14 @@ internal static class NeteaseQueueMetadata
             foreach(var item in json.RootElement.GetProperty("list").EnumerateArray())
             {
                 if(!item.TryGetProperty("track",out var track) || !track.TryGetProperty("name",out var name) || !string.Equals(name.GetString(),media.Title,StringComparison.OrdinalIgnoreCase))continue;
+                if(!string.IsNullOrWhiteSpace(media.AlbumTitle) && track.TryGetProperty("album",out var candidateAlbum)
+                    && candidateAlbum.TryGetProperty("name",out var albumName)
+                    && !string.Equals(albumName.GetString(),media.AlbumTitle,StringComparison.OrdinalIgnoreCase))continue;
                 if(track.TryGetProperty("artists",out var artists) && !string.IsNullOrWhiteSpace(media.Artist) && !artists.EnumerateArray().Any(artist=>artist.TryGetProperty("name",out var artistName) && media.Artist.Contains(artistName.GetString()??"",StringComparison.OrdinalIgnoreCase)))continue;
                 if(track.TryGetProperty("id",out var id))media.SourceTrackId=id.ValueKind==JsonValueKind.Number?id.GetInt64():long.Parse(id.GetString()!);
                 if(track.TryGetProperty("duration",out var duration))media.Duration=TimeSpan.FromMilliseconds(duration.GetDouble());
+                if(track.TryGetProperty("album",out var album) && album.TryGetProperty("picUrl",out var picture))
+                    media.ArtworkUrl=picture.GetString()?.Replace("http://","https://",StringComparison.OrdinalIgnoreCase);
                 return;
             }
         }

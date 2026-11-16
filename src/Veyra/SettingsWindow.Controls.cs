@@ -4,11 +4,62 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using GlassDock.Island;
 
 namespace GlassDock;
 
 internal sealed partial class SettingsWindow
 {
+    private ComboBox? _sidebarModeChoice;
+    private readonly List<(ComboBox Choice,Func<IslandAccentColor> Read)> _islandColorChoices=new();
+    public override void ApplyPreferences()
+    {
+        base.ApplyPreferences();
+        if(_sidebarModeChoice is not null)_sidebarModeChoice.SelectedIndex=(int)Program.Prefs.SidebarMode;
+        foreach(var (choice,read) in _islandColorChoices)choice.SelectedIndex=(int)read();
+    }
+
+    private void AddIslandColor(Panel panel,string title,Func<IslandAccentColor> read,Action<IslandAccentColor> write)
+    {
+        var row=new Grid {MinHeight=35};
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition {Width=new GridLength(156)});
+        var label=Ui.Text(title,13);label.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(label);
+        var choice=new ComboBox {Height=29,ItemsSource=IslandPalette.Options,SelectedIndex=(int)read(),
+            Background=Brushes.Transparent,BorderThickness=new Thickness(0),Template=ProfileTemplate()};
+        var item=new DataTemplate(typeof(IslandColorOption));
+        var content=new FrameworkElementFactory(typeof(StackPanel));content.SetValue(StackPanel.OrientationProperty,Orientation.Horizontal);
+        var swatch=new FrameworkElementFactory(typeof(Border));swatch.SetValue(FrameworkElement.WidthProperty,12d);
+        swatch.SetValue(FrameworkElement.HeightProperty,12d);swatch.SetValue(Border.CornerRadiusProperty,new CornerRadius(6));
+        swatch.SetValue(FrameworkElement.MarginProperty,new Thickness(0,0,8,0));
+        swatch.SetBinding(Border.BackgroundProperty,new Binding(nameof(IslandColorOption.Swatch)));content.AppendChild(swatch);
+        var name=new FrameworkElementFactory(typeof(TextBlock));name.SetBinding(TextBlock.TextProperty,new Binding(nameof(IslandColorOption.Name)));
+        name.SetValue(FrameworkElement.VerticalAlignmentProperty,VerticalAlignment.Center);content.AppendChild(name);
+        item.VisualTree=content;choice.ItemTemplate=item;
+        System.Windows.Automation.AutomationProperties.SetName(choice,"灵动岛"+title);
+        Grid.SetColumn(choice,1);row.Children.Add(choice);panel.Children.Add(row);
+        _islandColorChoices.Add((choice,read));
+        choice.SelectionChanged+=(_,_)=> {
+            if(choice.SelectedItem is not IslandColorOption option || option.Value==read())return;
+            write(option.Value);Program.ApplyPreferences();
+        };
+    }
+    private void AddSidebarMode(Panel panel)
+    {
+        var row=new Grid {MinHeight=35};
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition {Width=new GridLength(142)});
+        var label=Ui.Text("右侧状态栏",13);label.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(label);
+        var choice=new ComboBox {Height=29,ItemsSource=new[]{"自动隐藏","固定","始终置顶"},
+            SelectedIndex=(int)Program.Prefs.SidebarMode,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Template=ProfileTemplate()};
+        _sidebarModeChoice=choice;
+        System.Windows.Automation.AutomationProperties.SetName(choice,"右侧状态栏模式");
+        Grid.SetColumn(choice,1);row.Children.Add(choice);panel.Children.Add(row);
+        choice.SelectionChanged+=(_,_)=> {
+            if(choice.SelectedIndex<0 || choice.SelectedIndex==(int)Program.Prefs.SidebarMode)return;
+            Program.Prefs.SidebarMode=(SidebarDisplayMode)choice.SelectedIndex;Program.ApplyPreferences();
+        };
+    }
     private StackPanel Section(string title)
     {
         var header=Ui.Text(title,11); header.FontWeight=FontWeights.SemiBold; header.Opacity=.9; header.Margin=new Thickness(8,10,0,7); _sections.Children.Add(header);
@@ -46,6 +97,7 @@ internal sealed partial class SettingsWindow
         var row=new Grid {Margin=new Thickness(0,4,0,3)}; row.ColumnDefinitions.Add(new ColumnDefinition {Width=new GridLength(82)}); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition {Width=GridLength.Auto});
         var label=Ui.Text("材质刷新率",12); label.VerticalAlignment=VerticalAlignment.Center; row.Children.Add(label);
         var profiles=new ComboBox {Height=29,ItemsSource=rates.Select(rate=>$"{rate} fps").ToArray(),SelectedIndex=Array.FindIndex(rates,rate=>Program.Prefs.GlassFramesPerSecond<=rate),Background=Brushes.Transparent,BorderThickness=new Thickness(0)};
+        System.Windows.Automation.AutomationProperties.SetName(profiles,"材质刷新率");
         profiles.Template=ProfileTemplate(); Grid.SetColumn(profiles,1); row.Children.Add(profiles);
         var reset=Ui.Button(Ui.Glyph("\uE777",11),"重置材质刷新率",()=>profiles.SelectedIndex=Array.IndexOf(rates,defaultValue),25,23,30); reset.Margin=new Thickness(7,0,0,0); Grid.SetColumn(reset,2); row.Children.Add(reset);
         profiles.SelectionChanged+=(_,_)=> {if(profiles.SelectedIndex<0)return; Program.Prefs.GlassFramesPerSecond=rates[profiles.SelectedIndex]; Program.ApplyPreferences();}; panel.Children.Add(row);
@@ -55,7 +107,7 @@ internal sealed partial class SettingsWindow
         var template=new ControlTemplate(typeof(ComboBox)); var grid=new FrameworkElementFactory(typeof(Grid));
         var toggle=new FrameworkElementFactory(typeof(ToggleButton)); toggle.SetBinding(ToggleButton.IsCheckedProperty,new Binding("IsDropDownOpen") {RelativeSource=new RelativeSource(RelativeSourceMode.TemplatedParent),Mode=BindingMode.TwoWay});
         var face=new ControlTemplate(typeof(ToggleButton)); var border=new FrameworkElementFactory(typeof(Border)); border.SetValue(Border.CornerRadiusProperty,new CornerRadius(9)); border.SetValue(Border.BorderThicknessProperty,new Thickness(.7)); border.SetValue(Border.BorderBrushProperty,new SolidColorBrush(Color.FromArgb(65,225,240,255))); border.SetValue(Border.BackgroundProperty,new SolidColorBrush(Color.FromArgb(12,240,248,255))); var arrow=new FrameworkElementFactory(typeof(TextBlock)); arrow.SetValue(TextBlock.TextProperty,"⌄"); arrow.SetValue(FrameworkElement.HorizontalAlignmentProperty,HorizontalAlignment.Right); arrow.SetValue(FrameworkElement.VerticalAlignmentProperty,VerticalAlignment.Center); arrow.SetValue(FrameworkElement.MarginProperty,new Thickness(0,0,10,2)); border.AppendChild(arrow); face.VisualTree=border; toggle.SetValue(Control.TemplateProperty,face); grid.AppendChild(toggle);
-        var selection=new FrameworkElementFactory(typeof(ContentPresenter)); selection.SetValue(UIElement.IsHitTestVisibleProperty,false); selection.SetValue(FrameworkElement.MarginProperty,new Thickness(10,0,28,0)); selection.SetValue(FrameworkElement.VerticalAlignmentProperty,VerticalAlignment.Center); selection.SetBinding(ContentPresenter.ContentProperty,new Binding("SelectionBoxItem") {RelativeSource=new RelativeSource(RelativeSourceMode.TemplatedParent)}); grid.AppendChild(selection);
+        var selection=new FrameworkElementFactory(typeof(ContentPresenter)); selection.SetValue(UIElement.IsHitTestVisibleProperty,false); selection.SetValue(FrameworkElement.MarginProperty,new Thickness(10,0,28,0)); selection.SetValue(FrameworkElement.VerticalAlignmentProperty,VerticalAlignment.Center); selection.SetBinding(ContentPresenter.ContentProperty,new Binding("SelectionBoxItem") {RelativeSource=new RelativeSource(RelativeSourceMode.TemplatedParent)}); selection.SetBinding(ContentPresenter.ContentTemplateProperty,new Binding("SelectionBoxItemTemplate") {RelativeSource=new RelativeSource(RelativeSourceMode.TemplatedParent)}); grid.AppendChild(selection);
         var popup=new FrameworkElementFactory(typeof(Popup)); popup.Name="PART_Popup"; popup.SetValue(Popup.PlacementProperty,PlacementMode.Bottom); popup.SetValue(Popup.AllowsTransparencyProperty,true); popup.SetValue(Popup.PopupAnimationProperty,PopupAnimation.None); popup.SetBinding(Popup.IsOpenProperty,new Binding("IsDropDownOpen") {RelativeSource=new RelativeSource(RelativeSourceMode.TemplatedParent),Mode=BindingMode.TwoWay});
         var glass=new FrameworkElementFactory(typeof(Styles.GlassMenuSurface)); var scroll=new FrameworkElementFactory(typeof(ScrollViewer)); scroll.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty,ScrollBarVisibility.Hidden); scroll.AppendChild(new FrameworkElementFactory(typeof(ItemsPresenter))); glass.AppendChild(scroll); popup.AppendChild(glass); grid.AppendChild(popup); template.VisualTree=grid; return template;
     }

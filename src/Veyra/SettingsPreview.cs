@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
@@ -28,13 +28,13 @@ internal static class SettingsPreview
                 nint icon=Branding.CreateNativeIcon(); Check("Native tray icon loaded",icon!=0); DestroyIcon(icon);
                 Check("Settings has a real optical glass background",window.HasMaterialImage);
                 Check("All three settings groups use optical glass",Descendants<GlassCard>(window).Count(card=>card.HasOpticalMaterial)>=3);
-                Check("Five functional switches and four integrated sliders remain",Descendants<CheckBox>(window).Count()==5 && Descendants<UnifiedSlider>(window).Count()==4);
+                Check("Five functional switches, sidebar modes and four integrated sliders remain",Descendants<CheckBox>(window).Count()==5 && Descendants<UnifiedSlider>(window).Count()==4);
                 Check("All five individual reset actions remain",Descendants<Button>(window).Count(button=>button.ToolTip?.ToString()?.StartsWith("重置")==true)==5);
                 Check("Slider fill remains translucent",Descendants<ProgressBar>(window).All(bar=>bar.Foreground is SolidColorBrush brush && brush.Color.A<255));
                 string full=Path.GetFullPath(path); Directory.CreateDirectory(Path.GetDirectoryName(full)!);
                 var bitmap=new RenderTargetBitmap((int)window.ActualWidth,(int)window.ActualHeight,96,96,PixelFormats.Pbgra32); bitmap.Render(window);
                 var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using(var stream=File.Create(full+".png"))encoder.Save(stream);
-                var combo=Descendants<ComboBox>(window).Single(); combo.IsDropDownOpen=true; await Task.Delay(160);
+                var combo=Descendants<ComboBox>(window).Single(control=>System.Windows.Automation.AutomationProperties.GetName(control)=="材质刷新率"); combo.IsDropDownOpen=true; await Task.Delay(160);
                 Check("Frame-rate popup opens with Liquid Glass",combo.IsDropDownOpen); combo.IsDropDownOpen=false;
                 foreach(var reset in Descendants<Button>(window).Where(button=>button.ToolTip?.ToString()?.StartsWith("重置")==true))reset.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
                 var defaults=new Preferences();

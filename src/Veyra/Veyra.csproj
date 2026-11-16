@@ -15,7 +15,7 @@
     <Title>Veyra</Title>
     <Description>Veyra Liquid Glass desktop</Description>
     <Company>Veyra</Company>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <StartupObject>GlassDock.Program</StartupObject>
   </PropertyGroup>
   <ItemGroup>

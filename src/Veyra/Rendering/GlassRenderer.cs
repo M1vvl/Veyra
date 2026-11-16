@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Diagnostics;
 using System.Numerics;
 using System.Reflection;
@@ -72,7 +72,6 @@ public sealed partial class GlassRenderer : IDisposable
     private long _readbackSequence;
     private WriteableBitmap? _bitmap;
     private BitmapSource? _visibleBitmap;
-    private Int32Rect _presentedFrameBounds;
     private int _allocationWidth,_allocationHeight;
     private BitmapSource? _retainedFrame;
     private Int32Rect _monitorBounds, _captureBounds, _outputBounds;
@@ -108,7 +107,7 @@ public sealed partial class GlassRenderer : IDisposable
             }
         }
         long materialBytes=(long)_allocationWidth*_allocationHeight*4;
-        long bitmapBytes=_bitmap is null?0:materialBytes;
+        long bitmapBytes=_bitmap is null?0:(long)_bitmap.PixelWidth*_bitmap.PixelHeight*4;
         if(_retainedFrame is not null && !ReferenceEquals(_retainedFrame,_visibleBitmap))
             bitmapBytes+=(long)_retainedFrame.PixelWidth*_retainedFrame.PixelHeight*4;
         return new {
@@ -429,7 +428,6 @@ public sealed partial class GlassRenderer : IDisposable
             bindFlags:BindFlags.RenderTarget));
         _outputView = _device.CreateRenderTargetView(_outputTexture);
         _readback[0]=CreateReadbackTexture();
-        _bitmap = new WriteableBitmap(allocationWidth,allocationHeight,96,96,PixelFormats.Pbgra32,null);
         AllocationGeneration++;
         return true;
     }
@@ -518,13 +516,13 @@ public sealed partial class GlassRenderer : IDisposable
             {
                 int stride = checked((int)mapped.RowPitch);
                 var bounds=_pendingFrameBounds[slot];
-                _bitmap!.WritePixels(bounds,mapped.DataPointer,checked(stride*bounds.Height),stride);
-                if(_visibleBitmap is null || bounds!=_presentedFrameBounds)
-                {
-                    _visibleBitmap=bounds.Width==_allocationWidth && bounds.Height==_allocationHeight
-                        ?_bitmap:new CroppedBitmap(_bitmap,bounds);
-                    _presentedFrameBounds=bounds;
-                }
+                // GPU allocations stay at their reserved maximum size. Present directly
+                // into a live, exact-size WPF bitmap: CroppedBitmap can retain its uploaded
+                // snapshot when the source WriteableBitmap receives another dirty region.
+                if(_bitmap is null || _bitmap.PixelWidth!=bounds.Width || _bitmap.PixelHeight!=bounds.Height)
+                    _bitmap=new WriteableBitmap(bounds.Width,bounds.Height,96,96,PixelFormats.Pbgra32,null);
+                _bitmap.WritePixels(bounds,mapped.DataPointer,checked(stride*bounds.Height),stride);
+                _visibleBitmap=_bitmap;
                 _hasMaterial = true;
                 _lastLightTime=_pendingLightTime[slot];
                 _retainedFrame=_visibleBitmap;

@@ -91,8 +91,6 @@ internal sealed class DockWindow : GlassWindow
             _foregroundHook=DesktopNative.WatchForeground(_foregroundCallback);
             if(_foregroundHook==0) Program.Log("Foreground notification unavailable; desktop placement uses the fallback timer.");
             _statusTimer.Start(); _activeTimer.Start();
-            var h=new WindowInteropHelper(this).Handle;
-            if(!DesktopNative.RegisterHotKey(h,1,0x0002|0x0004|0x4000,0x47)) Program.Log("Ctrl+Alt+G hotkey unavailable");
         };
         _activeTimer.Tick+=(_,_)=> { UpdateDesktopPresentation(); UpdateActiveFrame(); };
         _statusTimer.Tick+=(_,_)=>RefreshWindows();
@@ -102,7 +100,6 @@ internal sealed class DockWindow : GlassWindow
             _layer?.Dispose();
             _statusTimer.Stop(); _activeTimer.Stop(); StopAnimation();
             _externalVisual.Dispose();
-            DesktopNative.UnregisterHotKey(new WindowInteropHelper(this).Handle,1);
         };
     }
     private void OnForegroundChanged(nint hook,uint eventType,nint hwnd,int objectId,int childId,uint eventThread,uint eventTime)
@@ -152,11 +149,6 @@ internal sealed class DockWindow : GlassWindow
         {
             Show(); SurfaceVisible=true; RefreshWindows(); _statusTimer.Start(); RenderGlass();
         }
-    }
-    protected override nint WndProc(nint h,int msg,nint w,nint l,ref bool handled)
-    {
-        if(msg==0x0312 && w==1) { Program.OpenSettings(); handled=true; }
-        return base.WndProc(h,msg,w,l,ref handled);
     }
     private void SeedPins()
     {

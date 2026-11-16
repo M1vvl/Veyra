@@ -176,7 +176,7 @@ internal abstract class GlassWindow : Window
     }
     private void ShowMaterialFallback()
     {
-        if(_renderer?.IsTemporarilyUnavailable==true && Glass.Source is not null) return;
+        if(Glass.Source is not null) return;
         Glass.Source=null; Fallback.Visibility=Visibility.Visible; OnMaterialLuminance(.85);
         if(_renderer?.LastError is { } error && error!=_lastRenderError) { Program.Log(error); _lastRenderError=error; }
     }
