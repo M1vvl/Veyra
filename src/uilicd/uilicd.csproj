@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>uilicd</AssemblyName>
+    <RootNamespace>GlassDock</RootNamespace>
+    <ApplicationIcon>Assets/uilicd.ico</ApplicationIcon>
+    <Product>uilicd</Product>
+    <Title>uilicd</Title>
+    <Description>uilicd Liquid Glass desktop</Description>
+    <Company>uilicd</Company>
+    <Version>1.0.3</Version>
+    <StartupObject>GlassDock.Program</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="5" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="System.Text.Json" Version="9.0.23" />
+    <EmbeddedResource Include="Rendering/LiquidGlass.hlsl" />
+    <EmbeddedResource Include="Assets/uilicd.ico" />
+    <EmbeddedResource Include="Rendering/Shaders/*.cso;Rendering/Shaders/*.sha256" WithCulture="false" />
+    <None Update="ThirdParty/WitchDrawer/LICENSE.txt;ThirdParty/WitchDrawer/NOTICE.md;ThirdParty/NetEaseClock/LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

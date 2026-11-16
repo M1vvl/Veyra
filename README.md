@@ -1,18 +1,18 @@
 <div align="center">
 
-<h1>Veyra</h1>
+<h1>uilicd</h1>
 
-<img src="src/Veyra/Assets/Veyra-original.png" alt="Veyra 蓝底白色小狗图标" width="200" height="200">
+<img src="src/uilicd/Assets/uilicd-original.png" alt="uilicd 蓝底白色小狗图标" width="200" height="200">
 
 <p>让应用、文件与音乐，轻盈地融入桌面。</p>
 
 <p>采用 Liquid Glass 材质的 Windows 桌面工具<br>Dock · 右侧控制中心 · 映射收纳盒 · 音乐灵动岛</p>
 
 <p>
-  <a href="https://github.com/M1vvl/Veyra/releases/latest">下载 Windows 版</a> ·
-  <a href="https://github.com/M1vvl/Veyra/releases/download/v1.0.3/Veyra.exe">直接下载 1.0.3 EXE</a> ·
+  <a href="https://github.com/M1vvl/uilicd/releases/latest">下载 Windows 版</a> ·
+  <a href="https://github.com/M1vvl/uilicd/releases/download/v1.0.3/uilicd.exe">直接下载 1.0.3 EXE</a> ·
   <a href="docs/BUILD.md">构建指南</a> ·
-  <a href="https://github.com/M1vvl/Veyra/issues">问题反馈</a>
+  <a href="https://github.com/M1vvl/uilicd/issues">问题反馈</a>
 </p>
 
 </div>
@@ -36,18 +36,18 @@ Windows 11 x64。发布版为自带 .NET 运行时的单文件 EXE，下载后�
 
 ## 下载
 
-在 [Releases](https://github.com/M1vvl/Veyra/releases/latest) 的 Assets 中下载 `Veyra.exe`，保存到自己的文件夹后双击运行。同时下载并解压 `Veyra-1.0.3-Licenses.zip`，保存随附的第三方许可；`SHA256SUMS.txt` 提供文件校验值。
+在 [Releases](https://github.com/M1vvl/uilicd/releases/latest) 的 Assets 中下载 `uilicd.exe`，保存到自己的文件夹后双击运行。同时下载并解压 `uilicd-1.0.3-Licenses.zip`，保存随附的第三方许可；`SHA256SUMS.txt` 提供文件校验值。
 
 完整开发源码位于仓库 Code 页面，各发布页也提供对应版本的 Source code 下载。
 
 ## 使用
 
-启动后，通过 Veyra 托盘菜单打开设置。桌面应用、文件与文件夹可拖入 Dock 或收纳盒。
+启动后，通过 uilicd 托盘菜单打开设置。桌面应用、文件与文件夹可拖入 Dock 或收纳盒。
 
-设置和映射引用保存在本机用户目录 `%LOCALAPPDATA%\GlassDock`，兼容早期版本。收纳盒保留源文件位置。退出 Veyra 时恢复 Windows 任务栏。需要手动恢复时运行以下命令。
+设置和映射引用保存在本机用户目录 `%LOCALAPPDATA%\GlassDock`，兼容早期版本。收纳盒保留源文件位置。退出 uilicd 时恢复 Windows 任务栏。需要手动恢复时运行以下命令。
 
 ```powershell
-.\Veyra.exe --restore-taskbar
+.\uilicd.exe --restore-taskbar
 ```
 
 ## 开发与构建
@@ -58,19 +58,19 @@ Windows 11 x64。发布版为自带 .NET 运行时的单文件 EXE，下载后�
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-输出文件为 `dist\Veyra.exe`。完整构建说明见 [docs/BUILD.md](docs/BUILD.md)。
+输出文件为 `dist\uilicd.exe`。完整构建说明见 [docs/BUILD.md](docs/BUILD.md)。
 
 ## 免责声明
 
 本项目自有代码沿用仓库的 MIT 许可。第三方组件分别遵循各自许可，详见 [LICENSE](LICENSE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [licenses](licenses)。
 
-收纳盒吸附几何适配自 WitchDrawer，其相关代码遵循 PolyForm Noncommercial 1.0.1。包含该组件的分发与使用须遵守其非商业许可及 Required Notice，具体条款见 [WitchDrawer 许可](src/Veyra/ThirdParty/WitchDrawer/LICENSE.txt) 与 [版权说明](src/Veyra/ThirdParty/WitchDrawer/NOTICE.md)。
+收纳盒吸附几何适配自 WitchDrawer，其相关代码遵循 PolyForm Noncommercial 1.0.1。包含该组件的分发与使用须遵守其非商业许可及 Required Notice，具体条款见 [WitchDrawer 许可](src/uilicd/ThirdParty/WitchDrawer/LICENSE.txt) 与 [版权说明](src/uilicd/ThirdParty/WitchDrawer/NOTICE.md)。
 
 本软件按现状提供。在适用法律允许的范围内，作者和贡献者不对其适用性、可靠性或准确性作出明示或暗示的保证，也不承担使用本软件产生的损失责任。使用者应遵守所在地法律及相关第三方许可。
 
 ## 隐私政策
 
-Veyra 当前版本不包含用户数据收集、遥测或自动上传模块。偏好、Dock 固定项、收纳盒路径引用和诊断日志保存在本机用户目录。
+uilicd 当前版本不包含用户数据收集、遥测或自动上传模块。偏好、Dock 固定项、收纳盒路径引用和诊断日志保存在本机用户目录。
 
 音量、亮度、输入法、网络与托盘功能通过本机 Windows 接口交互。使用网络连接或打开第三方应用时，相关通信与数据处理受 Windows、网络服务及对应应用的隐私政策约束。
 
