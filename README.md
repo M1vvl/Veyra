@@ -1,31 +1,44 @@
-# Veyra
+<div align="center">
 
-[下载 Windows 单文件版](https://github.com/M1vvl/Veyra/releases/latest) · [直接下载 1.0.3 EXE](https://github.com/M1vvl/Veyra/releases/download/v1.0.3/Veyra.exe)
+<h1>Veyra</h1>
 
-Veyra 是采用 Liquid Glass 材质的 Windows 桌面工具，提供 Dock、右侧状态栏、控制中心和映射收纳盒。
+<img src="src/Veyra/Assets/Veyra-original.png" alt="Veyra 蓝底白色小狗图标" width="200" height="200">
 
-打开发布页，在 Assets 中下载 `Veyra.exe`，保存到自己的文件夹后双击运行。程序自带运行时，首次启动会自动展开依赖并短暂等待。支持 Windows 11 x64。
+<p>让应用、文件与音乐，轻盈地融入桌面。</p>
 
-同时下载并解压 `Veyra-1.0.3-Licenses.zip`，保存随附的第三方许可。`SHA256SUMS.txt` 提供文件校验值。
+<p>采用 Liquid Glass 材质的 Windows 桌面工具<br>Dock · 右侧控制中心 · 映射收纳盒 · 音乐灵动岛</p>
 
-仓库 Code 页面提供完整开发源码，可直接运行的软件在 Releases。构建需要 Windows 和 .NET 8 SDK，在源码根目录运行以下命令。
+<p>
+  <a href="https://github.com/M1vvl/Veyra/releases/latest">下载 Windows 版</a> ·
+  <a href="https://github.com/M1vvl/Veyra/releases/download/v1.0.3/Veyra.exe">直接下载 1.0.3 EXE</a> ·
+  <a href="docs/BUILD.md">构建指南</a> ·
+  <a href="https://github.com/M1vvl/Veyra/issues">问题反馈</a>
+</p>
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1
-```
+</div>
 
-输出文件为 `dist\Veyra.exe`。完整构建说明见 [docs/BUILD.md](docs/BUILD.md)。
+## 支持平台
+
+Windows 11 x64。发布版为自带 .NET 运行时的单文件 EXE，下载后双击运行，首次启动会自动展开依赖并短暂等待。
 
 ## 功能
 
-- Liquid Glass Dock，支持拖入应用、运行窗口识别和磁吸放大。
-- 右侧状态栏与控制中心，支持音量、亮度、网络、输入法、日历和隐藏托盘。
-- 映射收纳盒，保存文件和文件夹的绝对路径引用，支持独立命名、拖放排序、自动隐藏、固定与四边网格调整。
-- 收纳盒收起后，同列下方盒子自动补位，展开时恢复间距。
-- 设置支持玻璃透明度、Dock 尺寸、图标大小、磁吸和材质刷新率，并提供独立重置。
-- 最大化或全屏应用覆盖桌面时暂停相关渲染，返回桌面后恢复。
-- 音乐灵动岛支持旋转封面、逐字高亮与长歌词分段、展开过渡，以及歌词、进度条和律动条独立配色。关闭组件会停止媒体读取并释放专用资源。进度拖动需要播放器支持系统媒体定位接口，网易云与 QQ 音乐提供本机后台适配。
-- 网络页同步连接状态，已连接 Wi-Fi 置顶，其余附近网络按信号强度排列，并显示以太网连接。附近 Wi-Fi 扫描需要 Windows 位置访问权限，受限时可从网络页进入授权设置。
+| 模块 | 功能 |
+| --- | --- |
+| Dock | 拖入应用、识别运行窗口与磁吸放大，玻璃底框随图标动态伸展。 |
+| 右侧状态栏与控制中心 | 调整音量、亮度和网络，切换输入法，查看日历与隐藏托盘；支持自动隐藏、固定和始终置顶。 |
+| 映射收纳盒 | 引用文件与文件夹的原始位置，支持独立命名、拖放排序、分组隐藏与固定、网格缩放，收起后同列自动补位。 |
+| 音乐灵动岛 | 显示旋转封面、律动条、逐字歌词与播放进度，支持展开过渡及网易云、QQ 音乐本机后台适配。 |
+| 外观与配色 | 调整玻璃透明度、Dock 尺寸、图标大小、磁吸和材质刷新率；歌词、进度条、律动条可独立选择颜色，提供默认设置。 |
+| 桌面与资源管理 | 最大化或全屏应用覆盖桌面时暂停相关渲染，返回后恢复；关闭灵动岛会停止媒体读取并释放专用资源。 |
+
+网络页将已连接 Wi-Fi 置顶，其余附近网络按信号强度排列，并显示以太网连接。附近 Wi-Fi 扫描需要 Windows 位置访问权限，受限时可从网络页进入授权设置。音乐进度拖动需要播放器支持系统媒体定位接口，后台识别效果取决于播放器提供的信息与版本。
+
+## 下载
+
+在 [Releases](https://github.com/M1vvl/Veyra/releases/latest) 的 Assets 中下载 `Veyra.exe`，保存到自己的文件夹后双击运行。同时下载并解压 `Veyra-1.0.3-Licenses.zip`，保存随附的第三方许可；`SHA256SUMS.txt` 提供文件校验值。
+
+完整开发源码位于仓库 Code 页面，各发布页也提供对应版本的 Source code 下载。
 
 ## 使用
 
@@ -36,6 +49,16 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```powershell
 .\Veyra.exe --restore-taskbar
 ```
+
+## 开发与构建
+
+主程序使用 C#、WPF 与 Direct3D 11，源码按桌面交互、收纳、媒体和材质渲染模块组织。构建需要 Windows 和 .NET 8 SDK，在源码根目录运行以下命令。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+输出文件为 `dist\Veyra.exe`。完整构建说明见 [docs/BUILD.md](docs/BUILD.md)。
 
 ## 免责声明
 
